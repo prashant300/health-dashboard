@@ -6,6 +6,7 @@
 <title>Prashant · Health</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 
 <script type="module">
 import { initializeApp }   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
@@ -252,99 +253,120 @@ function renderMain(){
   requestAnimationFrame(()=>drawAllCharts());
 }
 
-// ── OVERVIEW ───────────────────────────────────────────────────────────
-function renderOverview(){
-  const flags = computeFlags();
-  const latest = reports[reports.length-1]?.metrics||{};
-  const prev   = reports[reports.length-2]?.metrics||{};
+// ── OVERVIEW ── 3-SECTION LAYOUT ──────────────────────────────────────
+function computeSections() {
+  const latest = reports[reports.length-1]?.metrics || {};
+  const prev   = reports[reports.length-2]?.metrics || {};
+  const actNow = [], watch = [], wins = [];
 
-  const hero = [
-    {key:"fasting_glucose", icon:"◈"},
-    {key:"ldl",             icon:"◎"},
-    {key:"hdl",             icon:"◉"},
-    {key:"uric_acid",       icon:"◇"},
-    {key:"sgot",            icon:"⬟"},
-    {key:"vitamin_d",       icon:"⬡"},
-    {key:"vitamin_b12",     icon:"⬢"},
-    {key:"prolactin",       icon:"◈"},
-  ];
+  Object.entries(latest).forEach(([k, v]) => {
+    if (!RANGES[k]) return;
+    const st     = getStatus(k, v);
+    const prevVal = prev[k] != null ? prev[k] : null;
+    const prevSt  = prevVal != null ? getStatus(k, prevVal) : null;
 
-  const insights = computeInsights();
+    const trendLabel = () => {
+      if (prevVal == null) return "New finding";
+      const diff = v - prevVal;
+      const pct  = Math.abs(diff / prevVal);
+      if (pct < 0.03) return "→ Unchanged";
+      if (k === "hdl") return diff > 0 ? "↑ Improving" : "↓ Falling";
+      return diff > 0 ? "↑ Rising" : "↓ Falling";
+    };
+
+    if (st === "danger") {
+      actNow.push({ k, v, prevVal, prevSt, trend: trendLabel() });
+    } else if (st === "warn") {
+      watch.push({ k, v, prevVal, prevSt, trend: trendLabel() });
+    } else if (st === "normal" && prevSt && prevSt !== "normal") {
+      const prevLabel = `was ${prevVal}`;
+      wins.push({ k, v, prevVal, prevSt, trend: prevLabel });
+    }
+  });
+
+  return { actNow, watch, wins };
+}
+
+function metricRow(item, mode) {
+  const r = RANGES[item.k];
+  const trendClass = item.trend.startsWith("↑") ? (item.k === "hdl" ? "tr-good" : "tr-bad")
+                   : item.trend.startsWith("↓") ? (item.k === "hdl" ? "tr-bad"  : "tr-good")
+                   : item.trend === "New finding" ? "tr-new"
+                   : mode === "wins" ? "tr-good" : "tr-neutral";
+  return `
+    <div class="metric-row">
+      <span class="mr-label">${r.label}</span>
+      <span class="mr-val">${item.v} <em>${r.unit}</em></span>
+      <span class="mr-ref">ref ${r.min}–${r.max}</span>
+      <span class="mr-trend ${trendClass}">${item.trend}</span>
+    </div>`;
+}
+
+function renderOverview() {
+  const { actNow, watch, wins } = computeSections();
+  const latest = reports[reports.length-1];
+  const noData = !latest;
+
+  if (noData) return `<div class="page-header"><h1 class="page-title">Overview</h1><p style="color:var(--text3);margin-top:24px">No reports yet. Add your first report to get started.</p></div>`;
 
   return `
-    <div class="page-header">
+    <div class="ov-header">
       <div>
         <h1 class="page-title">Overview</h1>
-        <div class="page-sub">Last updated ${reports[reports.length-1]?.date||"—"} · ${reports[reports.length-1]?.label||""}</div>
+        <div class="page-sub">Last updated ${latest.date} · ${latest.label}</div>
       </div>
     </div>
 
-    <!-- HERO KPI STRIP -->
-    <div class="kpi-grid">
-      ${hero.map(({key,icon})=>{
-        const r=RANGES[key]; if(!r) return "";
-        const cur=latest[key], prv=prev[key];
-        if(cur==null) return "";
-        const st=getStatus(key,cur);
-        const delta=prv!=null?(cur-prv):null;
-        const sign=delta===null?"":delta>0?"↑":"↓";
-        const dClass=(key==="hdl")?(delta>0?"d-pos":"d-neg"):(delta>0?"d-neg":"d-pos");
-        return `<div class="kpi kpi-${st}">
-          <div class="kpi-icon">${icon}</div>
-          <div class="kpi-label">${r.label}</div>
-          <div class="kpi-val">${cur}<span class="kpi-unit"> ${r.unit}</span></div>
-          ${delta!==null?`<div class="kpi-delta ${dClass}">${sign}${Math.abs(delta).toFixed(1)}</div>`:""}
-          <div class="kpi-ref">${r.min}–${r.max}</div>
-        </div>`;
-      }).join("")}
-    </div>
+    <!-- ACT NOW -->
+    ${actNow.length ? `
+    <div class="section-card sc-danger">
+      <div class="sc-head">
+        <span class="sc-icon">▲</span>
+        <span class="sc-title">Act Now</span>
+        <span class="sc-count sc-count-danger">${actNow.length}</span>
+        <span class="sc-desc">These need attention — out of safe range</span>
+      </div>
+      <div class="sc-rows">
+        ${actNow.map(i => metricRow(i, "danger")).join("")}
+      </div>
+    </div>` : ""}
 
-    <!-- INSIGHTS -->
-    ${insights.length?`
-    <div class="section-head"><span>Insights</span></div>
-    <div class="insights-grid">
-      ${insights.map(i=>`
-        <div class="insight insight-${i.type}">
-          <span class="i-icon">${i.icon}</span>
-          <span class="i-text">${i.text}</span>
-        </div>`).join("")}
-    </div>`:""}
+    <!-- WATCH -->
+    ${watch.length ? `
+    <div class="section-card sc-warn">
+      <div class="sc-head">
+        <span class="sc-icon">◎</span>
+        <span class="sc-title">Watch</span>
+        <span class="sc-count sc-count-warn">${watch.length}</span>
+        <span class="sc-desc">Borderline — could become serious if not addressed</span>
+      </div>
+      <div class="sc-rows">
+        ${watch.map(i => metricRow(i, "watch")).join("")}
+      </div>
+    </div>` : ""}
 
-    <!-- FLAGGED METRICS -->
-    ${flags.danger.length||flags.warn.length?`
-    <div class="section-head"><span>Needs Attention</span></div>
-    <div class="flags-table">
-      <div class="ft-head"><span>Metric</span><span>Value</span><span>Reference</span><span>Status</span><span>Trend</span></div>
-      ${[...flags.danger,...flags.warn].map(f=>{
-        const pts=reports.map(r=>r.metrics[f.metric]).filter(v=>v!=null);
-        const trend=pts.length>1?(pts[pts.length-1]>pts[pts.length-2]?"↑ Rising":"↓ Falling"):"—";
-        return `<div class="ft-row">
-          <span class="ft-name">${f.label}</span>
-          <span class="ft-val">${f.value} ${f.unit}</span>
-          <span class="ft-ref">${f.ref}</span>
-          <span class="ft-st ft-${f.status}">${f.status==="danger"?"Critical":"Watch"}</span>
-          <span class="ft-trend">${trend}</span>
-        </div>`;
-      }).join("")}
-    </div>`:""}
+    <!-- WINS -->
+    ${wins.length ? `
+    <div class="section-card sc-good">
+      <div class="sc-head">
+        <span class="sc-icon">✓</span>
+        <span class="sc-title">Improved</span>
+        <span class="sc-count sc-count-good">${wins.length}</span>
+        <span class="sc-desc">Back in range since last report</span>
+      </div>
+      <div class="sc-rows">
+        ${wins.map(i => metricRow(i, "wins")).join("")}
+      </div>
+    </div>` : ""}
 
-    <!-- MINI TREND ROW for key metrics -->
-    <div class="section-head"><span>Key Trends</span></div>
-    <div class="mini-chart-grid">
-      ${["ldl","hdl","triglycerides","uric_acid","sgot","sgpt","vitamin_d","vitamin_b12","tsh","prolactin","fasting_glucose","eosinophils"].map(key=>{
-        const pts=reports.map(r=>({date:r.date,val:r.metrics[key]})).filter(p=>p.val!=null);
-        if(!pts.length) return "";
-        const r=RANGES[key], st=getStatus(key,pts[pts.length-1].val);
-        return `<div class="mini-card mc-${st}">
-          <div class="mc-top">
-            <span class="mc-name">${r.label}</span>
-            <span class="mc-now">${pts[pts.length-1].val} <em>${r.unit}</em></span>
-          </div>
-          <canvas id="mc-${key}" class="mc-canvas" width="280" height="72"></canvas>
-          <div class="mc-dates">${pts.map(p=>`<span class="mcd-${getStatus(key,p.val)}">${p.date.slice(5)}</span>`).join("→")}</div>
-        </div>`;
-      }).join("")}
-    </div>
+    ${!actNow.length && !watch.length && !wins.length ? `
+    <div class="section-card sc-good">
+      <div class="sc-head">
+        <span class="sc-icon">✓</span>
+        <span class="sc-title">All Clear</span>
+        <span class="sc-desc">All tracked metrics are within normal range</span>
+      </div>
+    </div>` : ""}
   `;
 }
 
@@ -437,12 +459,6 @@ function renderHistory(){
 
 // ── CHART DRAWING ──────────────────────────────────────────────────────
 function drawAllCharts(){
-  // Mini overview charts
-  ["ldl","hdl","triglycerides","uric_acid","sgot","sgpt","vitamin_d","vitamin_b12","tsh","prolactin","fasting_glucose","eosinophils"].forEach(k=>{
-    const c=document.getElementById(`mc-${k}`);
-    if(c) drawChart(c, k, 280, 72, true);
-  });
-  // Detail cards
   Object.keys(RANGES).forEach(k=>{
     const c=document.getElementById(`dc-${k}`);
     if(c) drawChart(c, k, 320, 90, false);
@@ -463,12 +479,10 @@ function drawChart(canvas, key, W, H, mini){
   const toY=v=>pad.t+IH-(((v-lo)/(hi-lo))*IH);
   const toX=i=>pts.length<2?pad.l+IW/2:pad.l+(i/(pts.length-1))*IW;
 
-  // Normal band
   const yLo=toY(r.min), yHi=toY(r.max);
   ctx.fillStyle="rgba(134,239,172,0.07)";
   ctx.fillRect(pad.l, yHi, IW, yLo-yHi);
 
-  // Ref lines
   ctx.save(); ctx.setLineDash([3,3]); ctx.lineWidth=1;
   [r.min,r.max].forEach(v=>{
     ctx.strokeStyle="rgba(134,239,172,0.35)";
@@ -476,13 +490,11 @@ function drawChart(canvas, key, W, H, mini){
   });
   ctx.restore();
 
-  // Y axis labels (detail only)
   if(!mini){
     ctx.fillStyle="rgba(148,163,184,0.6)";
     ctx.font="9px Geist Mono, monospace";
     ctx.textAlign="right";
     [r.min,r.max].forEach(v=>ctx.fillText(v, pad.l-4, toY(v)+3));
-    // X axis dates
     ctx.textAlign="center";
     reports.filter(rep=>rep.metrics[key]!=null).forEach((rep,i)=>{
       const allPts=reports.filter(r2=>r2.metrics[key]!=null);
@@ -498,7 +510,6 @@ function drawChart(canvas, key, W, H, mini){
     ctx.fill(); return;
   }
 
-  // Area fill
   ctx.beginPath();
   pts.forEach((v,i)=>i===0?ctx.moveTo(toX(i),toY(v)):ctx.lineTo(toX(i),toY(v)));
   ctx.lineTo(toX(pts.length-1),H); ctx.lineTo(toX(0),H); ctx.closePath();
@@ -506,12 +517,10 @@ function drawChart(canvas, key, W, H, mini){
   g.addColorStop(0,"rgba(96,165,250,0.18)"); g.addColorStop(1,"rgba(96,165,250,0)");
   ctx.fillStyle=g; ctx.fill();
 
-  // Line
   ctx.beginPath();
   pts.forEach((v,i)=>i===0?ctx.moveTo(toX(i),toY(v)):ctx.lineTo(toX(i),toY(v)));
   ctx.strokeStyle="rgba(96,165,250,0.7)"; ctx.lineWidth=1.5; ctx.lineJoin="round"; ctx.stroke();
 
-  // Dots
   pts.forEach((v,i)=>{
     const st=getStatus(key,v);
     ctx.beginPath(); ctx.arc(toX(i),toY(v),mini?3:4,0,Math.PI*2);
@@ -521,7 +530,7 @@ function drawChart(canvas, key, W, H, mini){
   });
 }
 
-// ── INSIGHTS & FLAGS ───────────────────────────────────────────────────
+// ── FLAGS & INSIGHTS ───────────────────────────────────────────────────
 function computeFlags(){
   const latest=reports[reports.length-1]?.metrics||{};
   const danger=[], warn=[];
@@ -534,80 +543,214 @@ function computeFlags(){
   return {danger,warn};
 }
 
-function computeInsights(){
-  if(reports.length<2) return [{type:"info",icon:"·",text:"Add more reports to see trend insights."}];
-  const cur=reports[reports.length-1].metrics, prv=reports[reports.length-2].metrics;
-  const ins=[];
-  const chk=(k,good,bad)=>{
-    const c=cur[k],p=prv[k]; if(c==null) return;
-    const cs=getStatus(k,c), ps=getStatus(k,p??c);
-    if(ps!=="normal"&&cs==="normal") ins.push({type:"good",icon:"↗",text:good});
-    else if(ps==="normal"&&cs!=="normal") ins.push({type:"bad",icon:"↘",text:bad});
-    else if(cs!=="normal"){
-      const worse=(k==="hdl")?(c<p):(c>p);
-      if(p!=null&&worse) ins.push({type:"bad",icon:"↑",text:`${RANGES[k].label} worsening: ${p}→${c} ${RANGES[k].unit}`});
-      else if(p!=null) ins.push({type:"warn",icon:"→",text:`${RANGES[k].label} still out of range: ${c} ${RANGES[k].unit}`});
+// ── PDF PARSING ────────────────────────────────────────────────────────
+const METRIC_PARSE_MAP = {
+  "uric acid": "uric_acid", "serum uric acid": "uric_acid",
+  "fasting glucose": "fasting_glucose", "fasting blood glucose": "fasting_glucose",
+  "fasting blood sugar": "fasting_glucose", "fbs": "fasting_glucose",
+  "hemoglobin": "hemoglobin", "haemoglobin": "hemoglobin",
+  "total cholesterol": "total_cholesterol", "cholesterol": "total_cholesterol",
+  "triglycerides": "triglycerides", "triglyceride": "triglycerides",
+  "hdl cholesterol": "hdl", "hdl-c": "hdl",
+  "ldl cholesterol": "ldl", "ldl-c": "ldl",
+  "vldl": "vldl",
+  "non hdl": "non_hdl", "non-hdl": "non_hdl",
+  "sgot": "sgot", "ast": "sgot", "aspartate aminotransferase": "sgot",
+  "sgpt": "sgpt", "alt": "sgpt", "alanine aminotransferase": "sgpt",
+  "alkaline phosphatase": "alp",
+  "gamma gt": "ggt", "gamma glutamyl": "ggt",
+  "bilirubin total": "bilirubin_total", "total bilirubin": "bilirubin_total",
+  "direct bilirubin": "bilirubin_direct",
+  "indirect bilirubin": "bilirubin_indirect",
+  "total protein": "total_protein", "albumin": "albumin",
+  "globulin": "globulin", "a/g ratio": "ag_ratio",
+  "creatinine": "creatinine", "serum creatinine": "creatinine",
+  "blood urea nitrogen": "bun",
+  "urea": "urea", "serum urea": "urea",
+  "sodium": "sodium", "potassium": "potassium", "chloride": "chloride",
+  "25-oh vitamin d": "vitamin_d", "25 oh vitamin d": "vitamin_d",
+  "vitamin d": "vitamin_d",
+  "vitamin b12": "vitamin_b12", "vit b12": "vitamin_b12",
+  "calcium": "calcium",
+  "tsh": "tsh",
+  "hba1c": "hba1c", "haemoglobin a1c": "hba1c", "glycated hemoglobin": "hba1c",
+  "wbc": "wbc", "total leucocyte count": "wbc", "tlc": "wbc",
+  "neutrophils": "neutrophils", "lymphocytes": "lymphocytes",
+  "monocytes": "monocytes", "eosinophils": "eosinophils", "basophils": "basophils",
+  "platelet count": "platelets", "platelets": "platelets",
+  "esr": "esr",
+  "serum iron": "iron_serum",
+  "tibc": "tibc", "uibc": "uibc",
+  "transferrin saturation": "transferrin_sat",
+  "prolactin": "prolactin",
+  "total testosterone": "testosterone", "testosterone": "testosterone",
+  "cortisol": "cortisol", "serum cortisol": "cortisol",
+  "prostate specific antigen": "psa",
+};
+
+function extractMetrics(text) {
+  const lower = text.toLowerCase().replace(/\n/g," ");
+  const metrics = {};
+  // Sort by label length desc to match longer labels first
+  const entries = Object.entries(METRIC_PARSE_MAP).sort((a,b)=>b[0].length-a[0].length);
+  for (const [label, key] of entries) {
+    if (metrics[key]) continue; // already matched
+    const idx = lower.indexOf(label);
+    if (idx === -1) continue;
+    const slice = text.slice(idx + label.length, idx + label.length + 150);
+    const match = slice.match(/[^a-zA-Z](\d+(?:\.\d+)?)/);
+    if (match) {
+      const val = parseFloat(match[1]);
+      if (!isNaN(val) && val > 0 && val < 100000) metrics[key] = val;
     }
-  };
-  chk("sgot","Liver SGOT normalised","SGOT elevated — monitor liver");
-  chk("sgpt","Liver SGPT normalised","SGPT elevated — monitor liver");
-  chk("vitamin_d","Vitamin D now sufficient","Vitamin D dropped — supplement needed");
-  chk("vitamin_b12","B12 back in range","B12 dropped below range");
-  chk("uric_acid","Uric acid normalised","Uric acid elevated — dietary change needed");
-  chk("ldl","LDL now optimal","LDL above optimal");
-  chk("hdl","HDL improved into range","HDL below target");
-  chk("triglycerides","Triglycerides normalised","Triglycerides borderline high");
-  chk("prolactin","Prolactin normalised","Prolactin elevated — repeat fasting test");
-  chk("eosinophils","Eosinophils normalised","Eosinophils elevated — check allergy/parasite");
-  chk("non_hdl","Non-HDL improved","Non-HDL rising — cardiovascular risk");
-  if(!ins.length) ins.push({type:"good",icon:"✓",text:"All tracked metrics are within normal range."});
-  return ins;
+  }
+  return metrics;
+}
+
+async function parsePDFFile(file) {
+  try {
+    if (typeof pdfjsLib === "undefined") {
+      window.pdfjsLib = window["pdfjs-dist/build/pdf"] || window.pdfjsLib;
+    }
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+    const buf = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+    let text = "";
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      text += content.items.map(item => item.str + " ").join("") + "\n";
+    }
+    return extractMetrics(text);
+  } catch(e) {
+    console.error("PDF parse error:", e);
+    return {};
+  }
 }
 
 // ── ADD REPORT MODAL ───────────────────────────────────────────────────
-window.openModal = ()=>{
-  const groups=[...new Set(Object.values(RANGES).map(r=>r.group))];
-  document.getElementById("modal").style.display="flex";
-  document.getElementById("modal-inner").innerHTML=`
+let parsedMetrics = {};
+
+window.openModal = () => {
+  parsedMetrics = {};
+  document.getElementById("modal").style.display = "flex";
+  renderModalUpload();
+};
+window.closeModal = () => { document.getElementById("modal").style.display = "none"; };
+
+function renderModalUpload() {
+  document.getElementById("modal-inner").innerHTML = `
     <div class="m-head">
       <h2>Add Report</h2>
       <button class="m-close" onclick="closeModal()">✕</button>
     </div>
-    <div class="m-meta">
-      <label>Date<input type="date" id="nd" value="${new Date().toISOString().slice(0,10)}"/></label>
-      <label>Lab / Source<input type="text" id="nl" placeholder="e.g. Apollo Hospital"/></label>
+    <div class="m-upload-body">
+      <div class="m-meta-row">
+        <label class="m-meta-label">Date
+          <input type="date" id="nd" value="${new Date().toISOString().slice(0,10)}"/>
+        </label>
+        <label class="m-meta-label">Lab / Source
+          <input type="text" id="nl" placeholder="e.g. Tata 1mg"/>
+        </label>
+      </div>
+      <div class="upload-zone" id="upload-zone"
+        ondragover="event.preventDefault();this.classList.add('drag-over')"
+        ondragleave="this.classList.remove('drag-over')"
+        ondrop="handleDrop(event)">
+        <div class="uz-icon">↑</div>
+        <div class="uz-text">Drop your lab report PDF here</div>
+        <div class="uz-sub">or <label class="uz-link">browse files<input type="file" id="file-input" accept=".pdf" style="display:none" onchange="handleFileInput(this)"/></label></div>
+        <div class="uz-note">PDF parsing is automatic — values are pre-filled for review</div>
+      </div>
+      <div class="m-divider"><span>or</span></div>
+      <button class="m-manual-btn" onclick="renderModalManual({})">Enter values manually</button>
+    </div>
+  `;
+}
+
+window.handleDrop = async (e) => {
+  e.preventDefault();
+  document.getElementById("upload-zone").classList.remove("drag-over");
+  const file = e.dataTransfer.files[0];
+  if (file) await processFile(file);
+};
+
+window.handleFileInput = async (input) => {
+  if (input.files[0]) await processFile(input.files[0]);
+};
+
+async function processFile(file) {
+  const uz = document.getElementById("upload-zone");
+  uz.innerHTML = `<div class="uz-loading"><div class="uz-spinner"></div><div>Reading ${file.name}…</div></div>`;
+  const metrics = await parsePDFFile(file);
+  parsedMetrics = metrics;
+  const count = Object.keys(metrics).length;
+  if (count > 0) {
+    renderModalManual(metrics, `Found ${count} values from PDF — review before saving`);
+  } else {
+    renderModalManual({}, "Couldn't auto-parse this PDF — enter values manually");
+  }
+}
+
+function renderModalManual(prefill = {}, notice = "") {
+  const groups = [...new Set(Object.values(RANGES).map(r => r.group))];
+  document.getElementById("modal-inner").innerHTML = `
+    <div class="m-head">
+      <h2>Review & Save</h2>
+      <button class="m-close" onclick="closeModal()">✕</button>
+    </div>
+    ${notice ? `<div class="m-notice">${notice}</div>` : ""}
+    <div class="m-meta-row m-meta-pad">
+      <label class="m-meta-label">Date
+        <input type="date" id="nd" value="${new Date().toISOString().slice(0,10)}"/>
+      </label>
+      <label class="m-meta-label">Lab / Source
+        <input type="text" id="nl" placeholder="e.g. Tata 1mg"/>
+      </label>
     </div>
     <div class="m-groups">
-      ${groups.map(g=>`
-        <div class="m-group">
-          <div class="m-gtitle">${g}</div>
-          <div class="m-fields">
-            ${Object.keys(RANGES).filter(k=>RANGES[k].group===g).map(k=>`
-              <label class="m-field">
-                <span>${RANGES[k].label}<em>${RANGES[k].unit}</em></span>
-                <input type="number" step="any" id="f-${k}" placeholder="${RANGES[k].min}–${RANGES[k].max}"/>
-              </label>`).join("")}
-          </div>
-        </div>`).join("")}
+      ${groups.map(g => {
+        const keys = Object.keys(RANGES).filter(k => RANGES[k].group === g);
+        const hasPrefill = keys.some(k => prefill[k] != null);
+        return `
+          <div class="m-group">
+            <div class="m-gtitle">${g}</div>
+            <div class="m-fields">
+              ${keys.map(k => {
+                const r = RANGES[k];
+                const val = prefill[k];
+                const st = val != null ? getStatus(k, val) : "";
+                return `<label class="m-field ${val != null ? "m-field-found" : ""}">
+                  <span>${r.label}<em>${r.unit}</em></span>
+                  <input type="number" step="any" id="f-${k}"
+                    placeholder="${r.min}–${r.max}"
+                    ${val != null ? `value="${val}"` : ""}
+                    class="${st ? "fi-"+st : ""}"/>
+                </label>`;
+              }).join("")}
+            </div>
+          </div>`;
+      }).join("")}
     </div>
     <div class="m-foot">
-      <button class="m-cancel" onclick="closeModal()">Cancel</button>
+      <button class="m-cancel" onclick="renderModalUpload()">← Back</button>
       <button class="m-save" onclick="submitReport()">Save Report</button>
     </div>
   `;
-};
-window.closeModal = ()=>document.getElementById("modal").style.display="none";
-window.submitReport = async()=>{
-  const date=document.getElementById("nd").value;
-  const label=document.getElementById("nl").value||"Unknown Lab";
-  if(!date){ alert("Select a date"); return; }
-  const metrics={};
-  Object.keys(RANGES).forEach(k=>{
-    const el=document.getElementById(`f-${k}`);
-    if(el&&el.value!=="") metrics[k]=parseFloat(el.value);
+}
+
+window.submitReport = async () => {
+  const date  = document.getElementById("nd").value;
+  const label = document.getElementById("nl").value || "Unknown Lab";
+  if (!date) { alert("Select a date"); return; }
+  const metrics = {};
+  Object.keys(RANGES).forEach(k => {
+    const el = document.getElementById(`f-${k}`);
+    if (el && el.value !== "") metrics[k] = parseFloat(el.value);
   });
-  if(!Object.keys(metrics).length){ alert("Enter at least one value"); return; }
-  await window.__save({id:date,date,label,metrics});
+  if (!Object.keys(metrics).length) { alert("Enter at least one value"); return; }
+  await window.__save({ id: date, date, label, metrics });
 };
 </script>
 
@@ -631,7 +774,7 @@ window.submitReport = async()=>{
   --green-d:  #16a34a;
   --yellow-d: #d97706;
   --red-d:    #dc2626;
-  --r:        10px;
+  --r:        12px;
   --font:     'Geist Mono', monospace;
   --serif:    'Instrument Serif', serif;
 }
@@ -682,9 +825,7 @@ input  { font-family: var(--font); }
 .sb-meta { font-size: 0.7rem; color: var(--text3); margin-top: 1px; }
 .sb-flags-mini { padding: 0 20px 12px; display: flex; flex-direction: column; gap: 3px; }
 .flag-dot { font-size: 0.68rem; }
-.fd { color: var(--red); }
-.fw { color: var(--yellow); }
-.fn { color: var(--green); }
+.fd { color: var(--red); } .fw { color: var(--yellow); } .fn { color: var(--green); }
 
 .sb-nav { flex: 1; padding: 4px 10px; }
 .nav-item {
@@ -702,8 +843,7 @@ input  { font-family: var(--font); }
 .nav-icon  { font-size: 0.75rem; width: 14px; opacity: 0.6; }
 .nav-label { flex: 1; }
 .nav-badge { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-.bd { background: var(--red-d); }
-.bw { background: var(--yellow-d); }
+.bd { background: var(--red-d); } .bw { background: var(--yellow-d); }
 
 .sb-footer { padding: 16px 12px 0; border-top: 1px solid var(--border); margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
 .btn-add-report {
@@ -719,92 +859,64 @@ input  { font-family: var(--font); }
 
 /* ── MAIN CONTENT ── */
 #main-content {
-  padding: 36px 40px 60px; overflow-y: auto; background: var(--bg); max-width: 1200px;
+  padding: 48px 52px 80px; overflow-y: auto; background: var(--bg);
+  max-width: 900px;
 }
+.ov-header { margin-bottom: 36px; }
 .page-header { margin-bottom: 28px; }
-.page-title  { font-family: var(--serif); font-size: 2.2rem; font-style: italic; font-weight: 400; letter-spacing: -0.01em; }
-.page-sub    { color: var(--text3); font-size: 0.74rem; margin-top: 4px; letter-spacing: 0.04em; }
+.page-title  { font-family: var(--serif); font-size: 2.4rem; font-style: italic; font-weight: 400; letter-spacing: -0.01em; }
+.page-sub    { color: var(--text3); font-size: 0.74rem; margin-top: 6px; letter-spacing: 0.04em; }
 
-/* ── KPI STRIP ── */
-.kpi-grid {
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 32px;
+/* ── OVERVIEW SECTIONS ── */
+.section-card {
+  border-radius: var(--r); overflow: hidden; margin-bottom: 16px;
+  border: 1px solid var(--border);
 }
-.kpi {
-  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
-  padding: 16px; position: relative; overflow: hidden; transition: border-color 0.2s;
-}
-.kpi:hover { border-color: var(--border2); }
-.kpi-danger { border-left: 2px solid var(--red-d); }
-.kpi-warn   { border-left: 2px solid var(--yellow-d); }
-.kpi-normal { border-left: 2px solid rgba(134,239,172,0.3); }
-.kpi-icon  { font-size: 0.7rem; color: var(--text3); margin-bottom: 8px; }
-.kpi-label { font-size: 0.68rem; color: var(--text2); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
-.kpi-val   { font-size: 1.6rem; font-weight: 300; line-height: 1; }
-.kpi-unit  { font-size: 0.7rem; color: var(--text3); }
-.kpi-delta { font-size: 0.7rem; margin-top: 4px; }
-.kpi-ref   { font-size: 0.62rem; color: var(--text3); margin-top: 4px; }
-.d-pos { color: var(--green); }
-.d-neg { color: var(--red); }
+.sc-danger { border-left: 3px solid var(--red-d); }
+.sc-warn   { border-left: 3px solid var(--yellow-d); }
+.sc-good   { border-left: 3px solid rgba(134,239,172,0.5); }
 
-/* ── SECTION HEAD ── */
-.section-head {
-  display: flex; align-items: center; gap: 12px; margin-bottom: 14px; margin-top: 32px;
+.sc-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 18px 24px 16px; background: var(--surface);
+  border-bottom: 1px solid var(--border);
 }
-.section-head span {
-  font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text3);
+.sc-icon  { font-size: 0.85rem; }
+.sc-danger .sc-icon { color: var(--red); }
+.sc-warn   .sc-icon { color: var(--yellow); }
+.sc-good   .sc-icon { color: var(--green); }
+.sc-title { font-size: 0.9rem; font-weight: 500; color: var(--text); }
+.sc-count {
+  font-size: 0.68rem; padding: 2px 8px; border-radius: 20px;
 }
-.section-head::after {
-  content: ""; flex: 1; height: 1px; background: var(--border);
-}
+.sc-count-danger { background: rgba(252,165,165,0.12); color: var(--red); }
+.sc-count-warn   { background: rgba(252,211,77,0.12);  color: var(--yellow); }
+.sc-count-good   { background: rgba(134,239,172,0.12); color: var(--green); }
+.sc-desc { font-size: 0.72rem; color: var(--text3); margin-left: 4px; }
 
-/* ── INSIGHTS ── */
-.insights-grid { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
-.insight {
-  display: flex; align-items: flex-start; gap: 10px;
-  padding: 10px 14px; border-radius: 8px; font-size: 0.78rem; border: 1px solid transparent;
-}
-.insight-good   { background: rgba(134,239,172,0.06); border-color: rgba(134,239,172,0.15); color: var(--green); }
-.insight-bad    { background: rgba(252,165,165,0.06); border-color: rgba(252,165,165,0.15); color: var(--red); }
-.insight-warn   { background: rgba(252,211,77,0.06);  border-color: rgba(252,211,77,0.15);  color: var(--yellow); }
-.insight-info   { background: rgba(96,165,250,0.06);  border-color: rgba(96,165,250,0.15);  color: #93c5fd; }
-.i-icon { font-size: 0.85rem; flex-shrink: 0; margin-top: 1px; }
-.i-text { color: var(--text2); }
+.sc-rows { background: var(--bg); }
 
-/* ── FLAGS TABLE ── */
-.flags-table { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; margin-bottom: 8px; }
-.ft-head, .ft-row { display: grid; grid-template-columns: 2fr 1fr 1.2fr 0.8fr 0.8fr; gap: 0; padding: 10px 16px; }
-.ft-head { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text3); border-bottom: 1px solid var(--border); }
-.ft-row  { font-size: 0.78rem; border-bottom: 1px solid var(--border); }
-.ft-row:last-child { border-bottom: none; }
-.ft-row:hover { background: var(--surface2); }
-.ft-name { color: var(--text); }
-.ft-val  { color: var(--text2); font-weight: 500; }
-.ft-ref  { color: var(--text3); }
-.ft-trend{ color: var(--text3); }
-.ft-danger { color: var(--red); }
-.ft-warn   { color: var(--yellow); }
+.metric-row {
+  display: grid;
+  grid-template-columns: 1.8fr 1fr 1.2fr 1fr;
+  align-items: center;
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--border);
+  gap: 12px;
+  transition: background 0.1s;
+}
+.metric-row:last-child { border-bottom: none; }
+.metric-row:hover { background: var(--surface2); }
 
-/* ── MINI CHART GRID ── */
-.mini-chart-grid {
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
-}
-.mini-card {
-  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
-  padding: 12px; transition: border-color 0.15s;
-}
-.mini-card:hover { border-color: var(--border2); }
-.mc-normal { border-top: 1px solid rgba(134,239,172,0.2); }
-.mc-warn   { border-top: 1px solid rgba(252,211,77,0.3); }
-.mc-danger { border-top: 1px solid rgba(252,165,165,0.35); }
-.mc-top  { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
-.mc-name { font-size: 0.7rem; color: var(--text2); }
-.mc-now  { font-size: 0.85rem; font-weight: 500; text-align: right; }
-.mc-now em { font-size: 0.62rem; color: var(--text3); font-style: normal; }
-.mc-canvas { display: block; width: 100%; }
-.mc-dates { display: flex; gap: 6px; font-size: 0.6rem; margin-top: 6px; color: var(--text3); }
-.mcd-normal { color: var(--green); }
-.mcd-warn   { color: var(--yellow); }
-.mcd-danger { color: var(--red); }
+.mr-label { font-size: 0.84rem; color: var(--text); }
+.mr-val   { font-size: 0.9rem; font-weight: 500; color: var(--text); }
+.mr-val em { font-size: 0.65rem; color: var(--text3); font-style: normal; }
+.mr-ref   { font-size: 0.68rem; color: var(--text3); }
+.mr-trend { font-size: 0.72rem; text-align: right; }
+.tr-bad     { color: var(--red); }
+.tr-good    { color: var(--green); }
+.tr-new     { color: #93c5fd; }
+.tr-neutral { color: var(--text3); }
 
 /* ── DETAIL GRID ── */
 .detail-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
@@ -829,6 +941,7 @@ input  { font-family: var(--font); }
 .dh-normal { background: rgba(134,239,172,0.1); color: var(--green); }
 .dh-warn   { background: rgba(252,211,77,0.1);  color: var(--yellow); }
 .dh-danger { background: rgba(252,165,165,0.1); color: var(--red); }
+.d-pos { color: var(--green); } .d-neg { color: var(--red); }
 
 /* ── HISTORY ── */
 .hist-list { display: flex; flex-direction: column; gap: 14px; }
@@ -838,16 +951,16 @@ input  { font-family: var(--font); }
 .hist-lab  { font-size: 0.72rem; color: var(--text3); margin-top: 2px; }
 .hist-counts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .hc-total { font-size: 0.68rem; color: var(--text3); }
-.hc-d     { font-size: 0.68rem; background: rgba(252,165,165,0.1); color: var(--red); padding: 2px 8px; border-radius: 20px; }
-.hc-w     { font-size: 0.68rem; background: rgba(252,211,77,0.1); color: var(--yellow); padding: 2px 8px; border-radius: 20px; }
-.hc-ok    { font-size: 0.68rem; background: rgba(134,239,172,0.1); color: var(--green); padding: 2px 8px; border-radius: 20px; }
+.hc-d     { font-size: 0.68rem; background: rgba(252,165,165,0.1); color: var(--red);    padding: 2px 8px; border-radius: 20px; }
+.hc-w     { font-size: 0.68rem; background: rgba(252,211,77,0.1);  color: var(--yellow); padding: 2px 8px; border-radius: 20px; }
+.hc-ok    { font-size: 0.68rem; background: rgba(134,239,172,0.1); color: var(--green);  padding: 2px 8px; border-radius: 20px; }
 .btn-del-hist { background: transparent; border: 1px solid rgba(252,165,165,0.2); color: var(--red); padding: 3px 8px; border-radius: 6px; font-size: 0.72rem; }
 .hist-metrics { display: flex; flex-wrap: wrap; gap: 6px; }
-.hm-chip  { font-size: 0.65rem; padding: 3px 8px; border-radius: 5px; }
-.hm-normal{ background: rgba(134,239,172,0.07); color: var(--text2); }
-.hm-warn  { background: rgba(252,211,77,0.1); color: var(--yellow); }
-.hm-danger{ background: rgba(252,165,165,0.1); color: var(--red); }
-.hm-more  { background: var(--surface2); color: var(--text3); }
+.hm-chip   { font-size: 0.65rem; padding: 3px 8px; border-radius: 5px; }
+.hm-normal { background: rgba(134,239,172,0.07); color: var(--text2); }
+.hm-warn   { background: rgba(252,211,77,0.1);   color: var(--yellow); }
+.hm-danger { background: rgba(252,165,165,0.1);  color: var(--red); }
+.hm-more   { background: var(--surface2); color: var(--text3); }
 
 /* ── MODAL ── */
 #modal {
@@ -857,30 +970,86 @@ input  { font-family: var(--font); }
 }
 #modal-inner {
   background: var(--surface); border: 1px solid var(--border2); border-radius: 16px;
-  width: 100%; max-width: 700px; max-height: 90vh; overflow-y: auto;
+  width: 100%; max-width: 680px; max-height: 90vh; overflow-y: auto;
   display: flex; flex-direction: column;
 }
 .m-head {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 20px 24px 16px; border-bottom: 1px solid var(--border);
+  padding: 22px 28px 18px; border-bottom: 1px solid var(--border);
   position: sticky; top: 0; background: var(--surface); z-index: 1;
 }
-.m-head h2 { font-family: var(--serif); font-style: italic; font-size: 1.3rem; font-weight: 400; }
+.m-head h2 { font-family: var(--serif); font-style: italic; font-size: 1.4rem; font-weight: 400; }
 .m-close { background: transparent; border: 1px solid var(--border); color: var(--text2); width: 28px; height: 28px; border-radius: 7px; font-size: 0.9rem; }
-.m-meta { display: flex; gap: 14px; padding: 16px 24px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-.m-meta label { display: flex; flex-direction: column; gap: 4px; font-size: 0.72rem; color: var(--text3); flex: 1; min-width: 150px; }
-.m-meta input { background: var(--bg); border: 1px solid var(--border2); color: var(--text); padding: 8px 10px; border-radius: 7px; font-size: 0.82rem; }
-.m-groups { padding: 16px 24px; flex: 1; }
-.m-group { margin-bottom: 18px; }
-.m-gtitle { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--accent); margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.m-notice {
+  margin: 0 28px 0; padding: 10px 14px; border-radius: 8px; font-size: 0.76rem;
+  background: rgba(96,165,250,0.08); color: #93c5fd; border: 1px solid rgba(96,165,250,0.2);
+  margin-top: 16px;
+}
+.m-meta-row {
+  display: flex; gap: 14px; padding: 20px 28px; flex-wrap: wrap;
+}
+.m-meta-pad { padding-top: 20px; }
+.m-meta-label {
+  display: flex; flex-direction: column; gap: 5px; font-size: 0.72rem;
+  color: var(--text3); flex: 1; min-width: 160px;
+}
+.m-meta-label input {
+  background: var(--bg); border: 1px solid var(--border2); color: var(--text);
+  padding: 9px 12px; border-radius: 8px; font-size: 0.84rem;
+}
+.m-upload-body { padding: 0 28px 24px; display: flex; flex-direction: column; gap: 0; }
+.upload-zone {
+  border: 1.5px dashed var(--border2); border-radius: var(--r);
+  padding: 40px 24px; text-align: center; cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  margin-bottom: 4px;
+}
+.upload-zone.drag-over { border-color: var(--accent); background: rgba(59,130,246,0.05); }
+.uz-icon { font-size: 1.8rem; color: var(--text3); margin-bottom: 12px; }
+.uz-text { font-size: 0.9rem; color: var(--text2); margin-bottom: 6px; }
+.uz-sub  { font-size: 0.78rem; color: var(--text3); margin-bottom: 10px; }
+.uz-link { color: var(--accent); cursor: pointer; text-decoration: underline; }
+.uz-note { font-size: 0.68rem; color: var(--text3); }
+.uz-loading { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 10px 0; color: var(--text2); font-size: 0.82rem; }
+.uz-spinner {
+  width: 24px; height: 24px; border: 2px solid var(--border2);
+  border-top-color: var(--accent); border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.m-divider {
+  display: flex; align-items: center; gap: 12px;
+  color: var(--text3); font-size: 0.72rem; margin: 16px 0;
+}
+.m-divider::before, .m-divider::after { content:""; flex:1; height:1px; background: var(--border); }
+.m-manual-btn {
+  padding: 10px 16px; background: transparent; color: var(--text2);
+  border: 1px solid var(--border2); border-radius: 8px; font-size: 0.8rem;
+  transition: color 0.15s, border-color 0.15s;
+}
+.m-manual-btn:hover { color: var(--text); border-color: var(--accent); }
+.m-groups { padding: 0 28px 8px; }
+.m-group  { margin-bottom: 20px; }
+.m-gtitle { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--accent); margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
 .m-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(175px,1fr)); gap: 8px; }
-.m-field { display: flex; flex-direction: column; gap: 3px; font-size: 0.7rem; color: var(--text3); }
+.m-field  { display: flex; flex-direction: column; gap: 3px; font-size: 0.7rem; color: var(--text3); }
+.m-field-found { opacity: 1; }
 .m-field em { color: var(--accent); font-style: normal; margin-left: 4px; font-size: 0.62rem; }
-.m-field input { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 9px; border-radius: 6px; font-size: 0.78rem; }
+.m-field input {
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  padding: 6px 9px; border-radius: 6px; font-size: 0.78rem;
+}
+.m-field-found input { border-color: rgba(134,239,172,0.25); }
 .m-field input:focus { outline: none; border-color: var(--accent); }
-.m-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 24px; border-top: 1px solid var(--border); position: sticky; bottom: 0; background: var(--surface); }
-.m-cancel { padding: 8px 16px; background: transparent; color: var(--text3); border: 1px solid var(--border); border-radius: 7px; font-size: 0.78rem; }
-.m-save { padding: 8px 20px; background: var(--accent); color: #fff; border: none; border-radius: 7px; font-size: 0.78rem; font-weight: 500; }
+.fi-warn   { border-color: rgba(252,211,77,0.35) !important; }
+.fi-danger { border-color: rgba(252,165,165,0.35) !important; }
+.m-foot {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 8px; padding: 16px 28px; border-top: 1px solid var(--border);
+  position: sticky; bottom: 0; background: var(--surface);
+}
+.m-cancel { padding: 9px 16px; background: transparent; color: var(--text3); border: 1px solid var(--border); border-radius: 7px; font-size: 0.78rem; }
+.m-save   { padding: 9px 22px; background: var(--accent); color: #fff; border: none; border-radius: 7px; font-size: 0.78rem; font-weight: 500; }
 .m-save:hover { background: #2563eb; }
 
 ::-webkit-scrollbar { width: 5px; height: 5px; }
@@ -890,14 +1059,10 @@ input  { font-family: var(--font); }
 @media (max-width: 900px) {
   #app { grid-template-columns: 1fr; }
   #sidebar { position: relative; height: auto; flex-direction: row; flex-wrap: wrap; padding: 12px; }
-  .kpi-grid { grid-template-columns: repeat(2,1fr); }
-  .mini-chart-grid { grid-template-columns: repeat(2,1fr); }
   .detail-grid { grid-template-columns: 1fr; }
-  #main-content { padding: 20px; }
-}
-@media (max-width: 560px) {
-  .kpi-grid { grid-template-columns: repeat(2,1fr); }
-  .mini-chart-grid { grid-template-columns: 1fr; }
+  #main-content { padding: 24px 20px 60px; }
+  .metric-row { grid-template-columns: 1.5fr 1fr; grid-template-rows: auto auto; }
+  .mr-ref, .mr-trend { font-size: 0.65rem; }
 }
 </style>
 </head>
