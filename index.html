@@ -187,6 +187,54 @@
     await deleteDoc(doc(db, "users", uid, "reports", id));
   }
 
+  // ── SNAPSHOT — written to Firestore after every change ────────────
+  // Stored at: /claude_snapshot/health_data  (public read, no auth needed)
+  // Claude reads this document via REST API to answer health questions.
+  async function writeSnapshot(allReports) {
+    // Build per-metric trend arrays across all reports
+    const trends = {};
+    allReports.forEach(rep => {
+      Object.entries(rep.metrics).forEach(([key, val]) => {
+        if (!trends[key]) trends[key] = [];
+        trends[key].push({ date: rep.date, label: rep.label, value: val });
+      });
+    });
+
+    // Compute latest status for every metric
+    const latest = allReports.length ? allReports[allReports.length - 1].metrics : {};
+    const statuses = {};
+    Object.entries(latest).forEach(([key, val]) => {
+      statuses[key] = window.getStatus(key, val);
+    });
+
+    // Flags: any metric not "normal" in latest report
+    const flags = Object.entries(statuses)
+      .filter(([, st]) => st !== "normal" && st !== "unknown")
+      .map(([key, st]) => ({
+        metric: key,
+        label: (window.RANGES[key] || {}).label || key,
+        value: latest[key],
+        unit: (window.RANGES[key] || {}).unit || "",
+        status: st,
+        ref: window.RANGES[key] ? `${window.RANGES[key].min}–${window.RANGES[key].max}` : ""
+      }));
+
+    const snapshot = {
+      patient: { name: "Prashant Yadav", age: 32, sex: "Male", email: ALLOWED_EMAIL },
+      lastUpdated: new Date().toISOString(),
+      reportCount: allReports.length,
+      reportDates: allReports.map(r => ({ date: r.date, label: r.label })),
+      latestReport: allReports.length ? allReports[allReports.length - 1] : null,
+      previousReport: allReports.length > 1 ? allReports[allReports.length - 2] : null,
+      trends,
+      flags,
+      allReports
+    };
+
+    // Write to a publicly readable Firestore path Claude can query via REST
+    await setDoc(doc(db, "claude_snapshot", "health_data"), snapshot);
+  }
+
   // ── SEED if first login ───────────────────────────────────────────
   async function seedIfEmpty(uid) {
     const snap = await getDocs(collection(db, "users", uid, "reports"));
@@ -213,6 +261,8 @@
       currentUser = user;
       await seedIfEmpty(user.uid);
       reports = await loadReports(user.uid);
+      // Always sync snapshot on login so it reflects latest state
+      await writeSnapshot(reports);
       document.getElementById("auth-screen").style.display = "none";
       document.getElementById("app").style.display = "block";
       window.__reports = reports;
@@ -234,6 +284,7 @@
     await deleteReport(currentUser.uid, id);
     reports = reports.filter(r => r.id !== id);
     window.__reports = reports;
+    await writeSnapshot(reports);
     renderApp();
   };
 
@@ -244,6 +295,7 @@
     else reports.push(report);
     reports.sort((a, b) => a.date.localeCompare(b.date));
     window.__reports = reports;
+    await writeSnapshot(reports);
     renderApp();
   };
 
