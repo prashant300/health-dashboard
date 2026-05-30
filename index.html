@@ -730,13 +730,35 @@ async function parsePDFFile(file) {
 
 // ── MODAL STATE ────────────────────────────────────────────────────────
 let uploadedFiles=[], mergedMetrics={}, detectedDate=null;
-let imagingFiles=[]; // files detected as imaging
+let imagingFiles=[];   // files detected as imaging
+let pendingReports=[]; // collected during review steps, saved all at once at the end
 
 window.openModal=()=>{
-  uploadedFiles=[]; mergedMetrics={}; detectedDate=null; imagingFiles=[];
+  uploadedFiles=[]; mergedMetrics={}; detectedDate=null; imagingFiles=[]; pendingReports=[];
   document.getElementById("modal").style.display="flex";
   renderModalUpload();
 };
+
+// Save a single report to DB without closing the modal
+async function saveReportInternal(rep) {
+  await saveReport(currentUser.uid, rep);
+  const i=reports.findIndex(r=>r.id===rep.id);
+  if(i>=0) reports[i]=rep; else reports.push(rep);
+  reports.sort((a,b)=>a.date.localeCompare(b.date));
+}
+
+// Called once at the very end — save everything, then close
+async function saveAllAndClose() {
+  if(!pendingReports.length){ closeModal(); return; }
+  // Show saving state
+  const foot=document.querySelector(".m-foot");
+  if(foot) foot.innerHTML=`<span style="color:var(--text3);font-size:0.82rem">Saving ${pendingReports.length} report${pendingReports.length>1?"s":""}…</span>`;
+  for(const rep of pendingReports) await saveReportInternal(rep);
+  await writeSnapshot(reports);
+  pendingReports=[];
+  closeModal();
+  renderMain();
+}
 window.closeModal=()=>document.getElementById("modal").style.display="none";
 
 function renderModalUpload(){
@@ -906,12 +928,14 @@ function renderModalImagingReview(idx){
     <div class="m-foot">
       <button class="m-back" onclick="renderModalUpload()">← Back</button>
       <button class="m-save" onclick="submitImagingReport(${idx})">
-        ${idx<imagingFiles.length-1||(uploadedFiles.length>0||Object.keys(mergedMetrics).length>0)?"Next →":"Save Report"}
+        ${idx<imagingFiles.length-1 ? `Next: Imaging ${idx+2}/${imagingFiles.length} →`
+          : (uploadedFiles.length>0||Object.keys(mergedMetrics).length>0) ? "Next: Lab Values →"
+          : "Save All"}
       </button>
     </div>`;
 }
 
-window.submitImagingReport=async(idx)=>{
+window.submitImagingReport=(idx)=>{
   const date=document.getElementById("nd").value;
   const label=document.getElementById("nl").value||"Unknown";
   const modality=document.getElementById("img-modality").value;
@@ -919,18 +943,22 @@ window.submitImagingReport=async(idx)=>{
   const findings=document.getElementById("img-findings").value.trim();
   const impression=document.getElementById("img-impression").value.trim();
   if(!date){alert("Select a date");return;}
-  const rep={
-    id:`${date}-img-${Date.now()}`,
+  // Collect — don't save yet
+  pendingReports.push({
+    id:`${date}-img-${idx}-${Date.now()}`,
     date,label,
     type:"imaging",
     imaging:[{modality,region,findings,impression}],
     metrics:{}
-  };
-  await window.__save(rep);
-  // After saving this imaging report, check if more imaging or lab to process
-  if(idx<imagingFiles.length-1) renderModalImagingReview(idx+1);
-  else if(uploadedFiles.length>0||Object.keys(mergedMetrics).length>0) renderModalLabReview();
-  // else modal closes via __save
+  });
+  // Decide next step
+  if(idx<imagingFiles.length-1){
+    renderModalImagingReview(idx+1); // more imaging files to review
+  } else if(uploadedFiles.length>0||Object.keys(mergedMetrics).length>0){
+    renderModalLabReview();          // lab files still to review
+  } else {
+    saveAllAndClose();               // nothing left — save everything now
+  }
 };
 
 // ── LAB REVIEW MODAL ──────────────────────────────────────────────────
@@ -991,7 +1019,9 @@ window.submitLabReport=async()=>{
     if(el&&el.value!=="") metrics[k]=parseFloat(el.value);
   });
   if(!Object.keys(metrics).length){alert("Enter at least one value");return;}
-  await window.__save({id:date,date,label,metrics});
+  // Collect lab report then save everything
+  pendingReports.push({id:date,date,label,metrics});
+  await saveAllAndClose();
 };
 </script>
 
