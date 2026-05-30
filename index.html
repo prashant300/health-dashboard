@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Prashant · Health Dashboard</title>
+
+<!-- Firebase -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut }
+    from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+  import { getFirestore, doc, setDoc, getDoc, collection, getDocs, deleteDoc }
+    from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyDimXR4vMqORQGn8XBPmQ9nfy8LHSHl3ws",
+    authDomain: "health-dashboard-d4ab9.firebaseapp.com",
+    projectId: "health-dashboard-d4ab9",
+    storageBucket: "health-dashboard-d4ab9.firebasestorage.app",
+    messagingSenderId: "341552888369",
+    appId: "1:341552888369:web:18824bf52e7f313cb33310",
+    measurementId: "G-K3XN81B9HZ"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+  const provider = new GoogleAuthProvider();
+
+  // ── AUTHORISED EMAIL ──────────────────────────────────────────────
+  const ALLOWED_EMAIL = "yadav.prashant300@gmail.com";
+
+  // ── SEED DATA (Jan 31 2026 + May 29 2026) ─────────────────────────
+  const SEED_REPORTS = [
+    {
+      id: "2026-01-31",
+      label: "Manipal Hospital",
+      date: "2026-01-31",
+      metrics: {
+        // Metabolic
+        fasting_glucose: 97,
+        // Lipids
+        total_cholesterol: 177, triglycerides: 137, hdl: 34.2, ldl: 127, vldl: 27.4,
+        non_hdl: 142.8, tc_hdl_ratio: 5.18, ldl_hdl_ratio: 3.71,
+        // Liver
+        sgot: 72, sgpt: 59, alp: 61, ggt: 30.3,
+        bilirubin_total: 0.36, bilirubin_direct: 0.17, bilirubin_indirect: 0.19,
+        total_protein: 7.4, albumin: 4.6, globulin: 2.83, ag_ratio: 1.61,
+        // Kidney
+        uric_acid: 6.96,
+        // Vitamins
+        vitamin_d: 17.8, vitamin_b12: 272,
+        // Thyroid
+        tsh: 4.61, t3: 1.15, t4: 7.59,
+        // Prostate
+        psa: 0.30
+      }
+    },
+    {
+      id: "2026-05-29",
+      label: "Tata 1mg",
+      date: "2026-05-29",
+      metrics: {
+        // CBC
+        hemoglobin: 14.8, rbc: 4.75, hct: 43.2, mcv: 91.0, mch: 31.1, mchc: 34.1,
+        rdw_cv: 11.7, wbc: 7.71, neutrophils: 52.8, lymphocytes: 30.1, monocytes: 8.1,
+        eosinophils: 8.8, basophils: 0.2, platelets: 256, mpv: 9.9, pdw: 17.8,
+        abs_neutrophil: 4.07, abs_lymphocyte: 2.32, abs_monocyte: 0.62,
+        abs_eosinophil: 0.68, abs_basophil: 0.02,
+        // Inflammatory
+        esr: 2,
+        // Iron
+        iron_serum: 142, uibc: 169, tibc: 311.07, transferrin_sat: 45.65,
+        // Metabolic
+        hba1c: 4.7, fasting_glucose: 79,
+        // Kidney
+        bun: 15, urea: 32.72, creatinine: 0.88, uric_acid: 8.0,
+        sodium: 141, potassium: 4.25, chloride: 108, bun_creatinine_ratio: 17.4,
+        // Lipids
+        total_cholesterol: 193, triglycerides: 156, hdl: 35, ldl: 127, vldl: 31,
+        non_hdl: 158, tc_hdl_ratio: 5.5, ldl_hdl_ratio: 3.62,
+        // Liver
+        bilirubin_total: 0.53, bilirubin_direct: 0.18, bilirubin_indirect: 0.35,
+        total_protein: 7.27, albumin: 4.71, globulin: 2.6, ag_ratio: 1.84,
+        sgot: 32, sgpt: 43, sgot_sgpt_ratio: 0.74, alp: 76, ggt: 43,
+        // Calcium & Bone
+        vitamin_d: 34.3, calcium: 9.2,
+        // Vitamins
+        vitamin_b12: 185,
+        // Thyroid
+        tsh: 4.717, t3: 0.86, t4: 7.3,
+        // Hormones
+        fsh: 3.3, lh: 4.37, prolactin: 29.11, testosterone: 321.52, cortisol: 13.0,
+        // Urine
+        urine_sg: 1.009, urine_ph: 5.0,
+        // PSA
+        psa: 0.30
+      }
+    }
+  ];
+
+  // ── REFERENCE RANGES ──────────────────────────────────────────────
+  window.RANGES = {
+    fasting_glucose:    { min: 70,   max: 99,    unit: "mg/dL",   label: "Fasting Glucose",      group: "Metabolic" },
+    hba1c:              { min: 4,    max: 5.6,   unit: "%",       label: "HbA1c",                group: "Metabolic" },
+    total_cholesterol:  { min: 0,    max: 200,   unit: "mg/dL",   label: "Total Cholesterol",    group: "Lipids" },
+    triglycerides:      { min: 0,    max: 150,   unit: "mg/dL",   label: "Triglycerides",        group: "Lipids" },
+    hdl:                { min: 40,   max: 60,    unit: "mg/dL",   label: "HDL",                  group: "Lipids" },
+    ldl:                { min: 0,    max: 100,   unit: "mg/dL",   label: "LDL",                  group: "Lipids" },
+    vldl:               { min: 2,    max: 30,    unit: "mg/dL",   label: "VLDL",                 group: "Lipids" },
+    non_hdl:            { min: 0,    max: 130,   unit: "mg/dL",   label: "Non-HDL Cholesterol",  group: "Lipids" },
+    tc_hdl_ratio:       { min: 0,    max: 4.0,   unit: "",        label: "TC:HDL Ratio",         group: "Lipids" },
+    ldl_hdl_ratio:      { min: 0,    max: 3.0,   unit: "",        label: "LDL:HDL Ratio",        group: "Lipids" },
+    sgot:               { min: 10,   max: 40,    unit: "U/L",     label: "SGOT/AST",             group: "Liver" },
+    sgpt:               { min: 10,   max: 40,    unit: "U/L",     label: "SGPT/ALT",             group: "Liver" },
+    alp:                { min: 45,   max: 135,   unit: "U/L",     label: "ALP",                  group: "Liver" },
+    ggt:                { min: 10,   max: 60,    unit: "U/L",     label: "GGT",                  group: "Liver" },
+    bilirubin_total:    { min: 0.3,  max: 1.2,   unit: "mg/dL",   label: "Bilirubin Total",      group: "Liver" },
+    bilirubin_direct:   { min: 0,    max: 0.2,   unit: "mg/dL",   label: "Bilirubin Direct",     group: "Liver" },
+    bilirubin_indirect: { min: 0.2,  max: 1.0,   unit: "mg/dL",   label: "Bilirubin Indirect",   group: "Liver" },
+    total_protein:      { min: 6.0,  max: 8.0,   unit: "g/dL",    label: "Total Protein",        group: "Liver" },
+    albumin:            { min: 3.5,  max: 5.2,   unit: "g/dL",    label: "Albumin",              group: "Liver" },
+    globulin:           { min: 2.1,  max: 3.9,   unit: "g/dL",    label: "Globulin",             group: "Liver" },
+    ag_ratio:           { min: 0.8,  max: 2.1,   unit: "",        label: "A/G Ratio",            group: "Liver" },
+    uric_acid:          { min: 3.5,  max: 7.2,   unit: "mg/dL",   label: "Uric Acid",            group: "Kidney" },
+    creatinine:         { min: 0.6,  max: 1.2,   unit: "mg/dL",   label: "Creatinine",           group: "Kidney" },
+    bun:                { min: 8.9,  max: 20.6,  unit: "mg/dL",   label: "BUN",                  group: "Kidney" },
+    urea:               { min: 19,   max: 44,    unit: "mg/dL",   label: "Urea",                 group: "Kidney" },
+    sodium:             { min: 136,  max: 145,   unit: "mmol/L",  label: "Sodium",               group: "Kidney" },
+    potassium:          { min: 3.5,  max: 5.1,   unit: "mmol/L",  label: "Potassium",            group: "Kidney" },
+    chloride:           { min: 98,   max: 107,   unit: "mmol/L",  label: "Chloride",             group: "Kidney" },
+    vitamin_d:          { min: 30,   max: 80,    unit: "ng/mL",   label: "Vitamin D",            group: "Vitamins" },
+    vitamin_b12:        { min: 250,  max: 900,   unit: "pg/mL",   label: "Vitamin B12",          group: "Vitamins" },
+    calcium:            { min: 9.1,  max: 10.4,  unit: "mg/dL",   label: "Calcium",              group: "Vitamins" },
+    tsh:                { min: 0.34, max: 4.25,  unit: "µIU/mL",  label: "TSH",                  group: "Thyroid" },
+    t3:                 { min: 0.7,  max: 2.04,  unit: "ng/mL",   label: "T3",                   group: "Thyroid" },
+    t4:                 { min: 4.5,  max: 11.0,  unit: "µg/dL",   label: "T4",                   group: "Thyroid" },
+    hemoglobin:         { min: 13,   max: 17,    unit: "g/dL",    label: "Hemoglobin",           group: "CBC" },
+    rbc:                { min: 4.5,  max: 5.5,   unit: "M/µL",    label: "RBC",                  group: "CBC" },
+    hct:                { min: 40,   max: 50,    unit: "%",       label: "HCT",                  group: "CBC" },
+    wbc:                { min: 4,    max: 10,    unit: "K/µL",    label: "WBC",                  group: "CBC" },
+    platelets:          { min: 150,  max: 410,   unit: "K/µL",    label: "Platelets",            group: "CBC" },
+    neutrophils:        { min: 40,   max: 80,    unit: "%",       label: "Neutrophils",          group: "CBC" },
+    lymphocytes:        { min: 20,   max: 40,    unit: "%",       label: "Lymphocytes",          group: "CBC" },
+    monocytes:          { min: 2,    max: 10,    unit: "%",       label: "Monocytes",            group: "CBC" },
+    eosinophils:        { min: 1,    max: 6,     unit: "%",       label: "Eosinophils",          group: "CBC" },
+    esr:                { min: 0,    max: 10,    unit: "mm/hr",   label: "ESR",                  group: "CBC" },
+    pdw:                { min: 9,    max: 17,    unit: "fL",      label: "PDW",                  group: "CBC" },
+    iron_serum:         { min: 65,   max: 175,   unit: "µg/dL",   label: "Serum Iron",           group: "Iron" },
+    tibc:               { min: 250,  max: 460,   unit: "µg/dL",   label: "TIBC",                 group: "Iron" },
+    transferrin_sat:    { min: 20,   max: 50,    unit: "%",       label: "Transferrin Sat.",     group: "Iron" },
+    prolactin:          { min: 3.46, max: 19.40, unit: "ng/mL",   label: "Prolactin",            group: "Hormones" },
+    testosterone:       { min: 240,  max: 870,   unit: "ng/dL",   label: "Testosterone",         group: "Hormones" },
+    fsh:                { min: 0.95, max: 11.95, unit: "mIU/mL",  label: "FSH",                  group: "Hormones" },
+    lh:                 { min: 0.57, max: 12.07, unit: "mIU/mL",  label: "LH",                   group: "Hormones" },
+    cortisol:           { min: 5.27, max: 22.45, unit: "µg/dL",   label: "Cortisol",             group: "Hormones" },
+    psa:                { min: 0,    max: 2.0,   unit: "ng/mL",   label: "PSA",                  group: "Hormones" },
+  };
+
+  // ── STATUS HELPER ─────────────────────────────────────────────────
+  window.getStatus = (key, val) => {
+    const r = RANGES[key];
+    if (!r || val === null || val === undefined) return "unknown";
+    if (key === "hdl") {
+      if (val >= r.min) return "normal";
+      if (val >= r.min * 0.85) return "warn";
+      return "danger";
+    }
+    if (val < r.min) return val < r.min * 0.85 ? "danger" : "warn";
+    if (val > r.max) return val > r.max * 1.15 ? "danger" : "warn";
+    return "normal";
+  };
+
+  // ── FIREBASE HELPERS ──────────────────────────────────────────────
+  async function saveReport(uid, report) {
+    await setDoc(doc(db, "users", uid, "reports", report.id), report);
+  }
+  async function loadReports(uid) {
+    const snap = await getDocs(collection(db, "users", uid, "reports"));
+    const arr = [];
+    snap.forEach(d => arr.push(d.data()));
+    arr.sort((a, b) => a.date.localeCompare(b.date));
+    return arr;
+  }
+  async function deleteReport(uid, id) {
+    await deleteDoc(doc(db, "users", uid, "reports", id));
+  }
+
+  // ── SEED if first login ───────────────────────────────────────────
+  async function seedIfEmpty(uid) {
+    const snap = await getDocs(collection(db, "users", uid, "reports"));
+    if (snap.empty) {
+      for (const r of SEED_REPORTS) await saveReport(uid, r);
+    }
+  }
+
+  // ── APP STATE ─────────────────────────────────────────────────────
+  let currentUser = null;
+  let reports = [];
+  let activeGroup = "All";
+
+  // ── AUTH FLOW ─────────────────────────────────────────────────────
+  onAuthStateChanged(auth, async (user) => {
+    if (user) {
+      if (user.email !== ALLOWED_EMAIL) {
+        document.getElementById("auth-screen").innerHTML =
+          `<div class="auth-box"><div class="auth-icon">🚫</div>
+           <h2>Access Denied</h2><p>This dashboard is private.</p>
+           <button onclick="window.__signout()">Sign out</button></div>`;
+        return;
+      }
+      currentUser = user;
+      await seedIfEmpty(user.uid);
+      reports = await loadReports(user.uid);
+      document.getElementById("auth-screen").style.display = "none";
+      document.getElementById("app").style.display = "block";
+      window.__reports = reports;
+      renderApp();
+    } else {
+      document.getElementById("auth-screen").style.display = "flex";
+      document.getElementById("app").style.display = "none";
+    }
+  });
+
+  window.__signin = async () => {
+    try { await signInWithPopup(auth, provider); }
+    catch(e) { alert("Sign-in failed: " + e.message); }
+  };
+  window.__signout = () => signOut(auth);
+
+  window.__deleteReport = async (id) => {
+    if (!confirm(`Delete report "${id}"?`)) return;
+    await deleteReport(currentUser.uid, id);
+    reports = reports.filter(r => r.id !== id);
+    window.__reports = reports;
+    renderApp();
+  };
+
+  window.__saveNewReport = async (report) => {
+    await saveReport(currentUser.uid, report);
+    const existing = reports.findIndex(r => r.id === report.id);
+    if (existing >= 0) reports[existing] = report;
+    else reports.push(report);
+    reports.sort((a, b) => a.date.localeCompare(b.date));
+    window.__reports = reports;
+    renderApp();
+  };
+
+  // ─────────────────────────────────────────────────────────────────
+  // RENDER ENGINE
+  // ─────────────────────────────────────────────────────────────────
+  function renderApp() {
+    const groups = ["All", ...new Set(Object.values(RANGES).map(r => r.group))];
+    const metricsToShow = Object.entries(RANGES).filter(([k]) =>
+      activeGroup === "All" || RANGES[k].group === activeGroup
+    );
+
+    // Compute insights
+    const insights = computeInsights();
+
+    document.getElementById("app-content").innerHTML = `
+      <!-- HEADER -->
+      <header>
+        <div class="header-left">
+          <div class="logo">PY<span>.</span></div>
+          <div>
+            <div class="header-title">Health Dashboard</div>
+            <div class="header-sub">Prashant Yadav · ${reports.length} reports · last updated ${reports[reports.length-1]?.date || "—"}</div>
+          </div>
+        </div>
+        <div class="header-right">
+          <button class="btn-add" onclick="openAddModal()">+ Add Report</button>
+          <button class="btn-signout" onclick="window.__signout()">Sign out</button>
+        </div>
+      </header>
+
+      <!-- INSIGHTS BAR -->
+      <div class="insights-strip">
+        ${insights.map(i => `
+          <div class="insight-chip insight-${i.type}">
+            <span class="insight-icon">${i.icon}</span>
+            <span>${i.text}</span>
+          </div>`).join("")}
+      </div>
+
+      <!-- SUMMARY CARDS -->
+      <div class="summary-row">
+        ${renderSummaryCards()}
+      </div>
+
+      <!-- GROUP FILTER -->
+      <div class="group-tabs">
+        ${groups.map(g => `
+          <button class="group-tab ${activeGroup===g?"active":""}" onclick="window.__setGroup('${g}')">${g}</button>
+        `).join("")}
+      </div>
+
+      <!-- METRIC CHARTS GRID -->
+      <div class="charts-grid" id="charts-grid">
+        ${metricsToShow.map(([key]) => renderMetricCard(key)).join("")}
+      </div>
+
+      <!-- REPORTS TABLE -->
+      <div class="section-title" style="margin-top:40px">📁 Report History</div>
+      <div class="reports-table-wrap">
+        <table class="reports-table">
+          <thead><tr><th>Date</th><th>Label</th><th>Metrics</th><th></th></tr></thead>
+          <tbody>
+            ${reports.map(r => `
+              <tr>
+                <td>${r.date}</td>
+                <td>${r.label}</td>
+                <td>${Object.keys(r.metrics).length} values</td>
+                <td><button class="btn-del" onclick="window.__deleteReport('${r.id}')">✕</button></td>
+              </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    // Draw sparklines
+    metricsToShow.forEach(([key]) => drawSparkline(key));
+  }
+
+  window.__setGroup = (g) => { activeGroup = g; renderApp(); };
+
+  // ── SUMMARY CARDS ─────────────────────────────────────────────────
+  function renderSummaryCards() {
+    if (reports.length < 2) return "";
+    const latest = reports[reports.length - 1].metrics;
+    const prev   = reports[reports.length - 2].metrics;
+    const cards = [
+      { key: "fasting_glucose", emoji: "🩸" },
+      { key: "ldl",             emoji: "💛" },
+      { key: "hdl",             emoji: "✅" },
+      { key: "uric_acid",       emoji: "⚗️" },
+      { key: "sgot",            emoji: "🫀" },
+      { key: "vitamin_d",       emoji: "☀️" },
+      { key: "vitamin_b12",     emoji: "🔴" },
+      { key: "prolactin",       emoji: "⚙️" },
+    ];
+    return cards.map(({key, emoji}) => {
+      const cur = latest[key], prv = prev[key];
+      const r = RANGES[key];
+      if (cur === undefined) return "";
+      const st = getStatus(key, cur);
+      const delta = prv !== undefined ? (cur - prv).toFixed(1) : null;
+      const arrow = delta === null ? "" : delta > 0 ? "▲" : delta < 0 ? "▼" : "–";
+      const deltaClass = (key==="hdl") ? (delta>0?"pos":"neg") : (delta>0?"neg":"pos");
+      return `<div class="summary-card s-${st}">
+        <div class="sc-emoji">${emoji}</div>
+        <div class="sc-label">${r.label}</div>
+        <div class="sc-val">${cur} <span class="sc-unit">${r.unit}</span></div>
+        ${delta !== null ? `<div class="sc-delta ${deltaClass}">${arrow} ${Math.abs(delta)}</div>` : ""}
+        <div class="sc-badge badge-${st}">${st==="normal"?"✓ Normal":st==="warn"?"⚠ Watch":"✗ High"}</div>
+      </div>`;
+    }).join("");
+  }
+
+  // ── METRIC CARD ───────────────────────────────────────────────────
+  function renderMetricCard(key) {
+    const r = RANGES[key];
+    const points = reports.map(rep => ({
+      date: rep.date,
+      label: rep.label,
+      val: rep.metrics[key]
+    })).filter(p => p.val !== undefined);
+    if (points.length === 0) return "";
+    const latest = points[points.length - 1];
+    const st = getStatus(key, latest.val);
+    const prev = points.length > 1 ? points[points.length - 2] : null;
+    const delta = prev ? (latest.val - prev.val) : null;
+    const arrow = delta === null ? "" : delta > 0 ? "▲" : delta < 0 ? "▼" : "–";
+    const deltaColor = (key==="hdl") ?
+      (delta>0?"#4ade80":"#f87171") : (delta>0?"#f87171":"#4ade80");
+
+    return `<div class="metric-card mc-${st}">
+      <div class="mc-header">
+        <span class="mc-name">${r.label}</span>
+        <span class="mc-group">${r.group}</span>
+      </div>
+      <div class="mc-body">
+        <div class="mc-main">
+          <span class="mc-val">${latest.val}</span>
+          <span class="mc-unit">${r.unit}</span>
+          ${delta !== null ? `<span class="mc-delta" style="color:${deltaColor}">${arrow}${Math.abs(delta).toFixed(1)}</span>` : ""}
+        </div>
+        <div class="mc-range">Ref: ${r.min}–${r.max} ${r.unit}</div>
+      </div>
+      <canvas id="spark-${key}" class="sparkline" width="240" height="64"></canvas>
+      <div class="mc-dots">
+        ${points.map(p => `<span class="mc-dot s-${getStatus(key,p.val)}" title="${p.date}: ${p.val}">${p.val}</span>`).join(" → ")}
+      </div>
+    </div>`;
+  }
+
+  // ── SPARKLINE ─────────────────────────────────────────────────────
+  function drawSparkline(key) {
+    const canvas = document.getElementById(`spark-${key}`);
+    if (!canvas) return;
+    const r = RANGES[key];
+    const points = reports.map(rep => rep.metrics[key]).filter(v => v !== undefined);
+    if (points.length < 1) return;
+    const ctx = canvas.getContext("2d");
+    const W = 240, H = 64, pad = 10;
+    ctx.clearRect(0, 0, W, H);
+
+    const allVals = [...points, r.min, r.max];
+    const lo = Math.min(...allVals) * 0.92;
+    const hi = Math.max(...allVals) * 1.08;
+    const toY = v => H - pad - ((v - lo) / (hi - lo)) * (H - pad*2);
+    const toX = i => points.length < 2 ? W/2 : pad + (i / (points.length - 1)) * (W - pad*2);
+
+    // Reference band
+    ctx.fillStyle = "rgba(74,222,128,0.08)";
+    const yMin = toY(r.min), yMax = toY(r.max);
+    ctx.fillRect(0, yMax, W, yMin - yMax);
+
+    // Ref lines
+    ctx.strokeStyle = "rgba(74,222,128,0.3)";
+    ctx.setLineDash([4,3]);
+    ctx.lineWidth = 1;
+    [r.min, r.max].forEach(v => {
+      ctx.beginPath(); ctx.moveTo(0, toY(v)); ctx.lineTo(W, toY(v)); ctx.stroke();
+    });
+    ctx.setLineDash([]);
+
+    if (points.length === 1) {
+      // Single point — draw a dot
+      const x = W/2, y = toY(points[0]);
+      const st = getStatus(key, points[0]);
+      ctx.beginPath();
+      ctx.arc(x, y, 5, 0, Math.PI*2);
+      ctx.fillStyle = st==="normal" ? "#4ade80" : st==="warn" ? "#fbbf24" : "#f87171";
+      ctx.fill();
+      return;
+    }
+
+    // Line
+    ctx.beginPath();
+    points.forEach((v, i) => i===0 ? ctx.moveTo(toX(i),toY(v)) : ctx.lineTo(toX(i),toY(v)));
+    ctx.strokeStyle = "#60a5fa";
+    ctx.lineWidth = 2;
+    ctx.lineJoin = "round";
+    ctx.stroke();
+
+    // Fill under line
+    ctx.beginPath();
+    points.forEach((v, i) => i===0 ? ctx.moveTo(toX(i),toY(v)) : ctx.lineTo(toX(i),toY(v)));
+    ctx.lineTo(toX(points.length-1), H);
+    ctx.lineTo(toX(0), H);
+    ctx.closePath();
+    const grad = ctx.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, "rgba(96,165,250,0.25)");
+    grad.addColorStop(1, "rgba(96,165,250,0)");
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Dots
+    points.forEach((v, i) => {
+      const st = getStatus(key, v);
+      ctx.beginPath();
+      ctx.arc(toX(i), toY(v), 4, 0, Math.PI*2);
+      ctx.fillStyle = st==="normal" ? "#4ade80" : st==="warn" ? "#fbbf24" : "#f87171";
+      ctx.strokeStyle = "#1e293b";
+      ctx.lineWidth = 1.5;
+      ctx.fill(); ctx.stroke();
+    });
+  }
+
+  // ── INSIGHTS ENGINE ───────────────────────────────────────────────
+  function computeInsights() {
+    const ins = [];
+    if (reports.length < 2) return [{ type:"info", icon:"ℹ️", text:"Add more reports to see trend insights." }];
+    const latest = reports[reports.length-1].metrics;
+    const prev   = reports[reports.length-2].metrics;
+
+    const check = (key, improvedMsg, worsenedMsg, newConcernMsg) => {
+      const cur = latest[key], prv = prev[key];
+      if (cur === undefined) return;
+      const curSt = getStatus(key, cur);
+      const prvSt = prv !== undefined ? getStatus(key, prv) : null;
+      if (prvSt === null) {
+        if (curSt !== "normal") ins.push({ type:"warn", icon:"⚠️", text: newConcernMsg || `${RANGES[key].label}: ${cur} ${RANGES[key].unit} — outside range` });
+      } else if (prvSt !== "normal" && curSt === "normal") {
+        ins.push({ type:"good", icon:"✅", text: improvedMsg });
+      } else if (prvSt === "normal" && curSt !== "normal") {
+        ins.push({ type:"bad", icon:"🔴", text: worsenedMsg });
+      } else if (curSt !== "normal") {
+        const delta = cur - prv;
+        const worse = (key === "hdl") ? delta < 0 : delta > 0;
+        if (worse) ins.push({ type:"bad", icon:"📈", text: `${RANGES[key].label} worsening: ${prv}→${cur} ${RANGES[key].unit}` });
+        else ins.push({ type:"warn", icon:"📉", text: `${RANGES[key].label} improving but still out: ${prv}→${cur} ${RANGES[key].unit}` });
+      }
+    };
+
+    check("sgot","SGOT/AST normalised ✓","SGOT elevated — check liver");
+    check("sgpt","SGPT/ALT normalised ✓","SGPT elevated — check liver");
+    check("vitamin_d","Vitamin D now sufficient ✓","Vitamin D dropped below optimal","Vitamin D deficient — supplement needed");
+    check("vitamin_b12","B12 back to normal","B12 dropped below range — supplement","B12 below range — supplement");
+    check("uric_acid","Uric acid normalised ✓","Uric acid now elevated — dietary changes needed");
+    check("ldl","LDL now optimal","LDL rose above optimal");
+    check("hdl","HDL improved into range","HDL dropped below range");
+    check("triglycerides","Triglycerides normalised","Triglycerides borderline high");
+    check("prolactin","Prolactin normalised","Prolactin elevated — repeat fasting test needed","Prolactin elevated — repeat fasting test");
+    check("tsh","TSH normalised","TSH slightly elevated — monitor thyroid");
+    check("fasting_glucose","Fasting glucose improved ✓","Fasting glucose rising — monitor");
+    check("eosinophils","Eosinophils normalised","Eosinophils elevated — possible allergy/parasite","Eosinophils elevated");
+    check("non_hdl","Non-HDL improved","Non-HDL rising — cardiovascular risk");
+    check("tc_hdl_ratio","TC:HDL ratio improved","TC:HDL ratio worsening — cardiovascular risk");
+    check("chloride","Chloride normalised","Chloride slightly above range","Chloride mildly high");
+
+    if (ins.length === 0) ins.push({ type:"good", icon:"🌟", text:"All tracked metrics are within normal range!" });
+    return ins;
+  }
+
+  // ── ADD REPORT MODAL ──────────────────────────────────────────────
+  window.openAddModal = () => {
+    const allKeys = Object.keys(RANGES);
+    const groups  = [...new Set(Object.values(RANGES).map(r => r.group))];
+    document.getElementById("modal-backdrop").style.display = "flex";
+    document.getElementById("modal-inner").innerHTML = `
+      <div class="modal-header">
+        <h2>Add New Report</h2>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <div class="modal-meta">
+        <label>Date <input type="date" id="new-date" value="${new Date().toISOString().slice(0,10)}" /></label>
+        <label>Source <input type="text" id="new-label" placeholder="e.g. Apollo Hospital" /></label>
+      </div>
+      <div class="modal-groups">
+        ${groups.map(g => `
+          <div class="modal-group">
+            <div class="modal-group-title">${g}</div>
+            <div class="modal-fields">
+              ${allKeys.filter(k => RANGES[k].group === g).map(k => `
+                <label class="field-label">
+                  <span>${RANGES[k].label} <em>${RANGES[k].unit}</em></span>
+                  <input type="number" step="any" id="f-${k}" placeholder="${RANGES[k].min}–${RANGES[k].max}" />
+                </label>
+              `).join("")}
+            </div>
+          </div>
+        `).join("")}
+      </div>
+      <div class="modal-footer">
+        <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+        <button class="btn-save" onclick="submitReport()">Save Report</button>
+      </div>
+    `;
+  };
+
+  window.closeModal = () => { document.getElementById("modal-backdrop").style.display = "none"; };
+
+  window.submitReport = async () => {
+    const date  = document.getElementById("new-date").value;
+    const label = document.getElementById("new-label").value || "Unknown Lab";
+    if (!date) { alert("Please select a date."); return; }
+    const metrics = {};
+    Object.keys(RANGES).forEach(k => {
+      const el = document.getElementById(`f-${k}`);
+      if (el && el.value !== "") metrics[k] = parseFloat(el.value);
+    });
+    if (Object.keys(metrics).length === 0) { alert("Please enter at least one metric."); return; }
+    const report = { id: date, date, label, metrics };
+    await window.__saveNewReport(report);
+    closeModal();
+  };
+</script>
+
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fraunces:ital,wght@0,300;0,600;0,900;1,300&display=swap');
+
+  :root {
+    --bg: #0b0f1a;
+    --surface: #111827;
+    --surface2: #1a2236;
+    --border: #1e2d45;
+    --text: #e2e8f0;
+    --muted: #64748b;
+    --accent: #3b82f6;
+    --green: #4ade80;
+    --yellow: #fbbf24;
+    --red: #f87171;
+    --radius: 12px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: 'DM Mono', monospace;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  /* ── AUTH SCREEN ── */
+  #auth-screen {
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh;
+    background: radial-gradient(ellipse at 60% 40%, #0d1b38 0%, #0b0f1a 70%);
+  }
+  .auth-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 52px 44px;
+    text-align: center;
+    max-width: 380px;
+    width: 90%;
+  }
+  .auth-icon { font-size: 3rem; margin-bottom: 16px; }
+  .auth-box h1 {
+    font-family: 'Fraunces', serif;
+    font-size: 2rem; font-weight: 900;
+    letter-spacing: -0.02em;
+    margin-bottom: 6px;
+  }
+  .auth-box h1 span { color: var(--accent); }
+  .auth-box p { color: var(--muted); margin-bottom: 28px; font-size: 0.85rem; }
+  .btn-google {
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    width: 100%; padding: 13px 20px;
+    background: white; color: #1a1a1a;
+    border: none; border-radius: 10px;
+    font-family: 'DM Mono', monospace; font-size: 0.9rem; font-weight: 500;
+    cursor: pointer; transition: transform 0.15s, box-shadow 0.15s;
+  }
+  .btn-google:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(0,0,0,0.4); }
+  .g-icon { width: 18px; height: 18px; }
+
+  /* ── APP SHELL ── */
+  #app { display: none; }
+  #app-content { max-width: 1400px; margin: 0 auto; padding: 24px 20px 60px; }
+
+  /* ── HEADER ── */
+  header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 24px; padding-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .header-left { display: flex; align-items: center; gap: 14px; }
+  .logo {
+    font-family: 'Fraunces', serif; font-size: 1.8rem; font-weight: 900;
+    background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .logo span { color: var(--accent); }
+  .header-title { font-family: 'Fraunces', serif; font-size: 1.1rem; font-weight: 600; }
+  .header-sub { color: var(--muted); font-size: 0.75rem; }
+  .header-right { display: flex; gap: 10px; }
+  .btn-add {
+    padding: 8px 16px; background: var(--accent); color: white;
+    border: none; border-radius: 8px; cursor: pointer;
+    font-family: 'DM Mono', monospace; font-size: 0.82rem; font-weight: 500;
+    transition: background 0.15s;
+  }
+  .btn-add:hover { background: #2563eb; }
+  .btn-signout {
+    padding: 8px 14px; background: transparent; color: var(--muted);
+    border: 1px solid var(--border); border-radius: 8px; cursor: pointer;
+    font-family: 'DM Mono', monospace; font-size: 0.82rem;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .btn-signout:hover { color: var(--text); border-color: var(--muted); }
+
+  /* ── INSIGHTS ── */
+  .insights-strip {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    margin-bottom: 24px;
+  }
+  .insight-chip {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 12px; border-radius: 20px; font-size: 0.78rem;
+  }
+  .insight-good  { background: rgba(74,222,128,0.1); border: 1px solid rgba(74,222,128,0.25); color: var(--green); }
+  .insight-bad   { background: rgba(248,113,113,0.1); border: 1px solid rgba(248,113,113,0.25); color: var(--red); }
+  .insight-warn  { background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.25); color: var(--yellow); }
+  .insight-info  { background: rgba(59,130,246,0.1); border: 1px solid rgba(59,130,246,0.25); color: var(--accent); }
+  .insight-icon { font-size: 0.9rem; }
+
+  /* ── SUMMARY CARDS ── */
+  .summary-row {
+    display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 28px;
+  }
+  .summary-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px 16px; min-width: 140px; flex: 1;
+    position: relative; overflow: hidden;
+  }
+  .summary-card.s-danger { border-color: rgba(248,113,113,0.4); }
+  .summary-card.s-warn   { border-color: rgba(251,191,36,0.3); }
+  .summary-card.s-normal { border-color: rgba(74,222,128,0.2); }
+  .sc-emoji { font-size: 1.3rem; margin-bottom: 4px; }
+  .sc-label { color: var(--muted); font-size: 0.72rem; margin-bottom: 2px; }
+  .sc-val   { font-size: 1.3rem; font-weight: 500; }
+  .sc-unit  { font-size: 0.7rem; color: var(--muted); }
+  .sc-delta { font-size: 0.75rem; margin-top: 2px; }
+  .sc-delta.pos { color: var(--green); }
+  .sc-delta.neg { color: var(--red); }
+  .sc-badge { display: inline-block; font-size: 0.65rem; padding: 2px 7px; border-radius: 20px; margin-top: 6px; }
+  .badge-normal { background: rgba(74,222,128,0.15); color: var(--green); }
+  .badge-warn   { background: rgba(251,191,36,0.15); color: var(--yellow); }
+  .badge-danger { background: rgba(248,113,113,0.15); color: var(--red); }
+  .badge-unknown { background: rgba(100,116,139,0.15); color: var(--muted); }
+
+  /* ── GROUP TABS ── */
+  .group-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 20px; }
+  .group-tab {
+    padding: 6px 14px; background: var(--surface2); color: var(--muted);
+    border: 1px solid var(--border); border-radius: 20px; cursor: pointer;
+    font-family: 'DM Mono', monospace; font-size: 0.78rem;
+    transition: all 0.15s;
+  }
+  .group-tab:hover { color: var(--text); border-color: var(--accent); }
+  .group-tab.active { background: var(--accent); color: white; border-color: var(--accent); }
+
+  /* ── SECTION TITLE ── */
+  .section-title {
+    font-family: 'Fraunces', serif; font-size: 1rem; font-weight: 600;
+    color: var(--muted); letter-spacing: 0.03em; margin-bottom: 14px;
+  }
+
+  /* ── CHARTS GRID ── */
+  .charts-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 14px;
+  }
+  .metric-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px; overflow: hidden;
+    transition: transform 0.15s, border-color 0.15s;
+  }
+  .metric-card:hover { transform: translateY(-2px); border-color: var(--accent); }
+  .metric-card.mc-danger { border-left: 3px solid var(--red); }
+  .metric-card.mc-warn   { border-left: 3px solid var(--yellow); }
+  .metric-card.mc-normal { border-left: 3px solid var(--green); }
+  .metric-card.mc-unknown { border-left: 3px solid var(--muted); }
+  .mc-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+  .mc-name   { font-size: 0.82rem; font-weight: 500; color: var(--text); }
+  .mc-group  { font-size: 0.65rem; color: var(--muted); background: var(--surface2); padding: 2px 7px; border-radius: 10px; }
+  .mc-body   { margin-bottom: 6px; }
+  .mc-main   { display: flex; align-items: baseline; gap: 5px; }
+  .mc-val    { font-size: 1.5rem; font-weight: 500; }
+  .mc-unit   { font-size: 0.72rem; color: var(--muted); }
+  .mc-delta  { font-size: 0.78rem; font-weight: 500; }
+  .mc-range  { font-size: 0.68rem; color: var(--muted); margin-top: 2px; }
+  .sparkline { display: block; width: 100%; margin: 8px 0; }
+  .mc-dots   { font-size: 0.68rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .mc-dot.s-normal  { color: var(--green); }
+  .mc-dot.s-warn    { color: var(--yellow); }
+  .mc-dot.s-danger  { color: var(--red); }
+  .mc-dot.s-unknown { color: var(--muted); }
+
+  /* ── REPORTS TABLE ── */
+  .reports-table-wrap {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden; margin-bottom: 20px;
+  }
+  .reports-table { width: 100%; border-collapse: collapse; }
+  .reports-table th {
+    text-align: left; padding: 10px 16px; font-size: 0.72rem;
+    color: var(--muted); border-bottom: 1px solid var(--border); text-transform: uppercase;
+  }
+  .reports-table td { padding: 10px 16px; font-size: 0.82rem; border-bottom: 1px solid var(--border); }
+  .reports-table tr:last-child td { border-bottom: none; }
+  .reports-table tr:hover td { background: var(--surface2); }
+  .btn-del {
+    background: transparent; border: 1px solid rgba(248,113,113,0.3); color: var(--red);
+    padding: 3px 9px; border-radius: 6px; cursor: pointer; font-size: 0.75rem;
+    transition: background 0.15s;
+  }
+  .btn-del:hover { background: rgba(248,113,113,0.1); }
+
+  /* ── MODAL ── */
+  #modal-backdrop {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.7); backdrop-filter: blur(4px);
+    z-index: 100; align-items: center; justify-content: center; padding: 20px;
+  }
+  #modal-inner {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 16px; width: 100%; max-width: 720px; max-height: 88vh;
+    overflow-y: auto; display: flex; flex-direction: column;
+  }
+  .modal-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 20px 24px 16px; border-bottom: 1px solid var(--border); position: sticky; top: 0;
+    background: var(--surface); z-index: 1;
+  }
+  .modal-header h2 { font-family: 'Fraunces', serif; font-size: 1.2rem; font-weight: 600; }
+  .modal-close {
+    background: transparent; border: 1px solid var(--border); color: var(--muted);
+    width: 30px; height: 30px; border-radius: 8px; cursor: pointer; font-size: 1rem;
+    transition: color 0.15s;
+  }
+  .modal-close:hover { color: var(--text); }
+  .modal-meta {
+    display: flex; gap: 16px; padding: 16px 24px;
+    border-bottom: 1px solid var(--border); flex-wrap: wrap;
+  }
+  .modal-meta label { display: flex; flex-direction: column; gap: 4px; font-size: 0.78rem; color: var(--muted); flex: 1; min-width: 160px; }
+  .modal-meta input {
+    background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+    padding: 8px 12px; border-radius: 8px; font-family: 'DM Mono', monospace; font-size: 0.85rem;
+  }
+  .modal-groups { padding: 16px 24px; flex: 1; }
+  .modal-group { margin-bottom: 20px; }
+  .modal-group-title {
+    font-family: 'Fraunces', serif; font-size: 0.85rem; font-weight: 600;
+    color: var(--accent); margin-bottom: 10px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .modal-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+  .field-label { display: flex; flex-direction: column; gap: 4px; font-size: 0.74rem; color: var(--muted); }
+  .field-label em { color: var(--accent); font-style: normal; }
+  .field-label input {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    padding: 7px 10px; border-radius: 7px; font-family: 'DM Mono', monospace; font-size: 0.82rem;
+  }
+  .field-label input:focus { outline: none; border-color: var(--accent); }
+  .modal-footer {
+    display: flex; justify-content: flex-end; gap: 10px;
+    padding: 16px 24px; border-top: 1px solid var(--border); position: sticky; bottom: 0;
+    background: var(--surface);
+  }
+  .btn-cancel {
+    padding: 9px 18px; background: transparent; color: var(--muted);
+    border: 1px solid var(--border); border-radius: 8px; cursor: pointer;
+    font-family: 'DM Mono', monospace; font-size: 0.82rem;
+  }
+  .btn-save {
+    padding: 9px 22px; background: var(--accent); color: white;
+    border: none; border-radius: 8px; cursor: pointer;
+    font-family: 'DM Mono', monospace; font-size: 0.82rem; font-weight: 500;
+    transition: background 0.15s;
+  }
+  .btn-save:hover { background: #2563eb; }
+
+  /* ── SCROLLBAR ── */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+  @media (max-width: 640px) {
+    .charts-grid { grid-template-columns: 1fr; }
+    .summary-row { gap: 8px; }
+    .summary-card { min-width: 120px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- AUTH SCREEN -->
+<div id="auth-screen">
+  <div class="auth-box">
+    <div class="auth-icon">🩺</div>
+    <h1>Health<span>.</span></h1>
+    <p>Personal health dashboard for Prashant Yadav.<br>Sign in with your Google account to continue.</p>
+    <button class="btn-google" onclick="window.__signin()">
+      <svg class="g-icon" viewBox="0 0 24 24">
+        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+      </svg>
+      Continue with Google
+    </button>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app">
+  <div id="app-content">Loading…</div>
+</div>
+
+<!-- MODAL -->
+<div id="modal-backdrop">
+  <div id="modal-inner"></div>
+</div>
+
+</body>
+</html>
