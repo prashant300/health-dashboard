@@ -124,25 +124,27 @@ window.getStatus = (key, val) => {
 };
 
 // ── FIREBASE HELPERS ───────────────────────────────────────────────────
-async function saveReport(uid, r)  { await setDoc(doc(db,"users",uid,"reports",r.id), r); }
-async function loadReports(uid)    {
+async function saveReport(uid, r)   { await setDoc(doc(db,"users",uid,"reports",r.id), r); }
+async function loadReports(uid)     {
   const snap = await getDocs(collection(db,"users",uid,"reports"));
   const arr=[]; snap.forEach(d=>arr.push(d.data()));
   return arr.sort((a,b)=>a.date.localeCompare(b.date));
 }
-async function deleteReport(uid,id){ await deleteDoc(doc(db,"users",uid,"reports",id)); }
-async function seedIfEmpty(uid)    {
+async function deleteReport(uid,id) { await deleteDoc(doc(db,"users",uid,"reports",id)); }
+async function seedIfEmpty(uid)     {
   const snap = await getDocs(collection(db,"users",uid,"reports"));
   if(snap.empty) for(const r of SEED_REPORTS) await saveReport(uid,r);
 }
 
 async function writeSnapshot(allReports) {
+  const labReports    = allReports.filter(r=>!r.type || r.type==="lab");
+  const imagingReports= allReports.filter(r=>r.type==="imaging");
   const trends={};
-  allReports.forEach(rep=>Object.entries(rep.metrics).forEach(([k,v])=>{
+  labReports.forEach(rep=>Object.entries(rep.metrics||{}).forEach(([k,v])=>{
     if(!trends[k]) trends[k]=[];
     trends[k].push({date:rep.date,label:rep.label,value:v});
   }));
-  const latest = allReports.length ? allReports[allReports.length-1].metrics : {};
+  const latest = labReports[labReports.length-1]?.metrics||{};
   const flags = Object.entries(latest)
     .map(([k,v])=>({k,v,st:window.getStatus(k,v)}))
     .filter(x=>x.st!=="normal"&&x.st!=="unknown")
@@ -154,11 +156,15 @@ async function writeSnapshot(allReports) {
   await setDoc(doc(db,"claude_snapshot","health_data"),{
     patient:{name:"Prashant Yadav",age:32,sex:"Male",email:ALLOWED_EMAIL},
     lastUpdated:new Date().toISOString(),
-    reportCount:allReports.length,
-    reportDates:allReports.map(r=>({date:r.date,label:r.label})),
-    latestReport:allReports[allReports.length-1]||null,
-    previousReport:allReports[allReports.length-2]||null,
-    trends, flags, allReports
+    reportCount:labReports.length,
+    imagingCount:imagingReports.length,
+    reportDates:labReports.map(r=>({date:r.date,label:r.label})),
+    latestReport:labReports[labReports.length-1]||null,
+    previousReport:labReports[labReports.length-2]||null,
+    imagingReports: imagingReports.map(r=>({
+      date:r.date, label:r.label, scans:r.imaging||[]
+    })),
+    trends, flags, allReports:labReports
   });
 }
 
@@ -190,7 +196,7 @@ window.__si  = async()=>{ try{ await signInWithPopup(auth,provider); }catch(e){ 
 window.__so  = ()=>signOut(auth);
 window.__sg  = g=>{ activeGroup=g; renderSidebar(); renderMain(); };
 window.__del = async id=>{
-  if(!confirm(`Delete report ${id}?`)) return;
+  if(!confirm(`Delete this report?`)) return;
   await deleteReport(currentUser.uid,id);
   reports=reports.filter(r=>r.id!==id);
   await writeSnapshot(reports); renderMain();
@@ -204,20 +210,22 @@ window.__save = async rep=>{
 };
 
 // ── SIDEBAR ────────────────────────────────────────────────────────────
-const NAV_GROUPS = ["Overview","Metabolic","Lipids","Liver","Kidney","CBC","Vitamins","Thyroid","Hormones","Iron","History"];
+const NAV_GROUPS = ["Overview","Metabolic","Lipids","Liver","Kidney","CBC","Vitamins","Thyroid","Hormones","Iron","Imaging","History"];
 const GROUP_ICONS = {
   Overview:"⊡", Metabolic:"⬡", Lipids:"◎", Liver:"⬟", Kidney:"◇",
-  CBC:"⬢", Vitamins:"◉", Thyroid:"◈", Hormones:"◎", Iron:"⬡", History:"≡"
+  CBC:"⬢", Vitamins:"◉", Thyroid:"◈", Hormones:"◎", Iron:"⬡",
+  Imaging:"⬜", History:"≡"
 };
 
 function renderSidebar(){
   const flags = computeFlags();
+  const imgCount = reports.filter(r=>r.type==="imaging").length;
   document.getElementById("sidebar").innerHTML=`
     <div class="sb-brand">
       <div class="sb-logo">H.</div>
       <div>
         <div class="sb-name">Prashant Yadav</div>
-        <div class="sb-meta">Age 32 · ${reports.length} report${reports.length!==1?"s":""}</div>
+        <div class="sb-meta">Age 32 · ${reports.filter(r=>!r.type||r.type==="lab").length} lab report${reports.filter(r=>!r.type||r.type==="lab").length!==1?"s":""}</div>
       </div>
     </div>
     <div class="sb-status-strip">
@@ -227,11 +235,12 @@ function renderSidebar(){
     </div>
     <nav class="sb-nav">
       ${NAV_GROUPS.map(g=>{
-        const hasFlagD = g!=="Overview"&&g!=="History" && flags.danger.some(f=>RANGES[f.metric]?.group===g);
-        const hasFlagW = g!=="Overview"&&g!=="History" && flags.warn.some(f=>RANGES[f.metric]?.group===g);
+        const hasFlagD = !["Overview","History","Imaging"].includes(g) && flags.danger.some(f=>RANGES[f.metric]?.group===g);
+        const hasFlagW = !["Overview","History","Imaging"].includes(g) && flags.warn.some(f=>RANGES[f.metric]?.group===g);
         const dot = hasFlagD ? `<span class="nav-dot nd"></span>` : hasFlagW ? `<span class="nav-dot nw"></span>` : "";
+        const badge = g==="Imaging" && imgCount>0 ? `<span class="nav-img-badge">${imgCount}</span>` : "";
         return `<button class="nav-item ${activeGroup===g?"active":""}" onclick="window.__sg('${g}')">
-          <span class="nav-label">${g}</span>${dot}
+          <span class="nav-label">${g}</span>${dot}${badge}
         </button>`;
       }).join("")}
     </nav>
@@ -247,71 +256,60 @@ function renderMain(){
   const el = document.getElementById("main-content");
   if(activeGroup==="Overview")    el.innerHTML = renderOverview();
   else if(activeGroup==="History") el.innerHTML = renderHistory();
+  else if(activeGroup==="Imaging") el.innerHTML = renderImaging();
   else                             el.innerHTML = renderGroup(activeGroup);
   requestAnimationFrame(()=>drawAllCharts());
 }
 
 // ── RANGE BAR ──────────────────────────────────────────────────────────
 function rangeBar(key, val) {
-  const r = RANGES[key];
-  const st = getStatus(key, val);
-  // Display bounds: generous enough to show out-of-range values clearly
+  const r   = RANGES[key];
+  const st  = getStatus(key, val);
   const span = r.max - r.min;
-  const lo = Math.max(0, r.min - span * 0.6);
-  const hi = r.max + span * 0.6;
-  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-  const pct    = (v) => ((clamp(v, lo, hi) - lo) / (hi - lo)) * 100;
-  const minPct = pct(r.min);
-  const maxPct = pct(r.max);
-  const valPct = pct(val);
+  const lo  = Math.max(0, r.min - span * 0.6);
+  const hi  = r.max + span * 0.6;
+  const clamp = (v,a,b) => Math.max(a, Math.min(b,v));
+  const pct = v => ((clamp(v,lo,hi)-lo)/(hi-lo))*100;
   return `
     <div class="rb-wrap">
       <div class="rb-track">
-        <div class="rb-zone" style="left:${minPct}%;width:${maxPct-minPct}%"></div>
-        <div class="rb-dot rb-${st}" style="left:${valPct}%"></div>
+        <div class="rb-zone" style="left:${pct(r.min)}%;width:${pct(r.max)-pct(r.min)}%"></div>
+        <div class="rb-dot rb-${st}" style="left:${pct(val)}%"></div>
       </div>
       <div class="rb-labels">
-        <span style="left:${minPct}%">${r.min}</span>
-        <span style="left:${maxPct}%">${r.max}</span>
+        <span style="left:${pct(r.min)}%">${r.min}</span>
+        <span style="left:${pct(r.max)}%">${r.max}</span>
       </div>
     </div>`;
 }
 
-// ── OVERVIEW ────────────────────────────────────────────────────────────
+// ── OVERVIEW ───────────────────────────────────────────────────────────
 function computeSections() {
-  const latest = reports[reports.length-1]?.metrics || {};
-  const prev   = reports[reports.length-2]?.metrics || {};
-  const actNow = [], watch = [], wins = [];
+  const labReports = reports.filter(r=>!r.type||r.type==="lab");
+  const latest = labReports[labReports.length-1]?.metrics || {};
+  const prev   = labReports[labReports.length-2]?.metrics || {};
+  const actNow=[], watch=[], wins=[];
 
-  Object.entries(latest).forEach(([k, v]) => {
-    if (!RANGES[k]) return;
-    const st      = getStatus(k, v);
-    const prevVal = prev[k] != null ? prev[k] : null;
-    const prevSt  = prevVal != null ? getStatus(k, prevVal) : null;
-
-    const trend = () => {
-      if (prevVal == null) return { label: "New", cls: "tn" };
-      const diff = v - prevVal;
-      const pct  = Math.abs(diff / prevVal);
-      if (pct < 0.03) return { label: "Unchanged", cls: "tu" };
-      const rising = diff > 0;
-      const good   = (k === "hdl") ? rising : !rising;
-      const lbl    = (rising ? "↑ " : "↓ ") + Math.abs(diff).toFixed(1);
-      return { label: lbl, cls: good ? "tg" : "tb" };
+  Object.entries(latest).forEach(([k,v])=>{
+    if(!RANGES[k]) return;
+    const st=getStatus(k,v), prevVal=prev[k]??null, prevSt=prevVal!=null?getStatus(k,prevVal):null;
+    const trend=()=>{
+      if(prevVal==null) return {label:"New",cls:"tn"};
+      const diff=v-prevVal, pct=Math.abs(diff/prevVal);
+      if(pct<0.03) return {label:"Unchanged",cls:"tu"};
+      const rising=diff>0, good=(k==="hdl")?rising:!rising;
+      return {label:(rising?"↑ ":"↓ ")+Math.abs(diff).toFixed(1), cls:good?"tg":"tb"};
     };
-
-    if (st === "danger") actNow.push({ k, v, prevVal, prevSt, trend: trend() });
-    else if (st === "warn") watch.push({ k, v, prevVal, prevSt, trend: trend() });
-    else if (st === "normal" && prevSt && prevSt !== "normal")
-      wins.push({ k, v, prevVal, prevSt, trend: { label: `was ${prevVal}`, cls: "tg" } });
+    if(st==="danger") actNow.push({k,v,trend:trend()});
+    else if(st==="warn") watch.push({k,v,trend:trend()});
+    else if(st==="normal"&&prevSt&&prevSt!=="normal")
+      wins.push({k,v,trend:{label:`was ${prevVal}`,cls:"tg"}});
   });
-
-  return { actNow, watch, wins };
+  return {actNow,watch,wins};
 }
 
 function metricCard(item) {
-  const r = RANGES[item.k];
-  const st = getStatus(item.k, item.v);
+  const r=RANGES[item.k], st=getStatus(item.k,item.v);
   return `
     <div class="mc-row">
       <div class="mc-top">
@@ -324,98 +322,78 @@ function metricCard(item) {
           <span class="mc-unit">${r.unit}</span>
         </div>
       </div>
-      ${rangeBar(item.k, item.v)}
-      <div class="mc-ref">Reference range: ${r.min}–${r.max} ${r.unit}</div>
+      ${rangeBar(item.k,item.v)}
+      <div class="mc-ref">Reference: ${r.min}–${r.max} ${r.unit}</div>
     </div>`;
 }
 
 function renderOverview() {
-  const { actNow, watch, wins } = computeSections();
-  const latest = reports[reports.length-1];
-  const prev   = reports[reports.length-2];
-
-  if (!latest) return `
-    <div class="page-header">
-      <h1 class="page-title">Overview</h1>
-      <p class="empty-state">No reports yet — add your first report to get started.</p>
-    </div>`;
+  const {actNow,watch,wins}=computeSections();
+  const labReports=reports.filter(r=>!r.type||r.type==="lab");
+  const latest=labReports[labReports.length-1], prev=labReports[labReports.length-2];
+  if(!latest) return `<div class="page-header"><h1 class="page-title">Overview</h1><p class="empty-state">No lab reports yet — add your first report.</p></div>`;
 
   return `
     <div class="page-header">
-      <div class="ph-left">
-        <h1 class="page-title">Overview</h1>
-        <div class="page-sub">
-          <span class="report-date-badge">${latest.date}</span>
-          <span class="report-lab">${latest.label}</span>
-          ${prev ? `<span class="report-prev">Previous: ${prev.date} · ${prev.label}</span>` : ""}
-        </div>
+      <h1 class="page-title">Overview</h1>
+      <div class="page-sub">
+        <span class="report-date-badge">${latest.date}</span>
+        <span class="report-lab">${latest.label}</span>
+        ${prev?`<span class="report-prev">Previous: ${prev.date} · ${prev.label}</span>`:""}
       </div>
     </div>
-
-    ${actNow.length ? `
+    ${actNow.length?`
     <div class="ov-section">
       <div class="ov-sec-head ov-sec-danger">
         <span class="ov-sec-icon">▲</span>
         <span class="ov-sec-title">Act Now</span>
         <span class="ov-sec-sub">${actNow.length} metric${actNow.length>1?"s":""} outside safe range</span>
       </div>
-      <div class="ov-sec-body">
-        ${actNow.map(metricCard).join("")}
-      </div>
-    </div>` : ""}
-
-    ${watch.length ? `
+      <div class="ov-sec-body">${actNow.map(metricCard).join("")}</div>
+    </div>`:""}
+    ${watch.length?`
     <div class="ov-section">
       <div class="ov-sec-head ov-sec-warn">
         <span class="ov-sec-icon">◉</span>
         <span class="ov-sec-title">Watch</span>
-        <span class="ov-sec-sub">${watch.length} metric${watch.length>1?"s":""} borderline — could worsen</span>
+        <span class="ov-sec-sub">${watch.length} metric${watch.length>1?"s":""} borderline — monitor closely</span>
       </div>
-      <div class="ov-sec-body">
-        ${watch.map(metricCard).join("")}
-      </div>
-    </div>` : ""}
-
-    ${wins.length ? `
+      <div class="ov-sec-body">${watch.map(metricCard).join("")}</div>
+    </div>`:""}
+    ${wins.length?`
     <div class="ov-section">
       <div class="ov-sec-head ov-sec-good">
         <span class="ov-sec-icon">✓</span>
         <span class="ov-sec-title">Improved</span>
         <span class="ov-sec-sub">${wins.length} metric${wins.length>1?"s":""} back in normal range</span>
       </div>
-      <div class="ov-sec-body">
-        ${wins.map(metricCard).join("")}
-      </div>
-    </div>` : ""}
-
-    ${!actNow.length && !watch.length ? `
+      <div class="ov-sec-body">${wins.map(metricCard).join("")}</div>
+    </div>`:""}
+    ${!actNow.length&&!watch.length?`
     <div class="ov-section">
       <div class="ov-sec-head ov-sec-good">
         <span class="ov-sec-icon">✓</span>
         <span class="ov-sec-title">All Clear</span>
         <span class="ov-sec-sub">All tracked metrics within normal range</span>
       </div>
-    </div>` : ""}
-  `;
+    </div>`:""}`;
 }
 
 // ── GROUP PAGE ─────────────────────────────────────────────────────────
 function renderGroup(group){
-  const keys = Object.keys(RANGES).filter(k=>RANGES[k].group===group);
-  const latest=reports[reports.length-1]?.metrics||{};
-  const prev  =reports[reports.length-2]?.metrics||{};
-
+  const keys=Object.keys(RANGES).filter(k=>RANGES[k].group===group);
+  const labReports=reports.filter(r=>!r.type||r.type==="lab");
   return `
     <div class="page-header">
       <h1 class="page-title">${group}</h1>
-      <div class="page-sub"><span class="report-lab">${keys.length} parameters tracked</span></div>
+      <div class="page-sub"><span class="report-lab">${keys.length} parameters</span></div>
     </div>
     <div class="detail-grid">
       ${keys.map(key=>{
         const r=RANGES[key];
-        const pts=reports.map(rep=>({date:rep.date,label:rep.label,val:rep.metrics[key]})).filter(p=>p.val!=null);
+        const pts=labReports.map(rep=>({date:rep.date,label:rep.label,val:rep.metrics?.[key]})).filter(p=>p.val!=null);
         if(!pts.length) return "";
-        const cur=pts[pts.length-1], prv=pts[pts.length-2];
+        const cur=pts[pts.length-1],prv=pts[pts.length-2];
         const st=getStatus(key,cur.val);
         const delta=prv?(cur.val-prv.val):null;
         const sign=delta===null?"":delta>0?"↑":"↓";
@@ -432,28 +410,93 @@ function renderGroup(group){
               ${delta!==null?`<div class="dc-delta ${dClass}">${sign}${Math.abs(delta).toFixed(1)}</div>`:""}
             </div>
           </div>
-          ${rangeBar(key, cur.val)}
+          ${rangeBar(key,cur.val)}
           <canvas id="dc-${key}" class="dc-canvas" width="320" height="80"></canvas>
           <div class="dc-history">
             ${pts.map(p=>`<span class="dh-pt dh-${getStatus(key,p.val)}">${p.date}: ${p.val}</span>`).join("")}
           </div>
         </div>`;
       }).join("")}
+    </div>`;
+}
+
+// ── IMAGING PAGE ───────────────────────────────────────────────────────
+const MODALITY_ICON = {
+  "X-Ray":"🩻", "Ultrasound":"〰", "MRI":"🧲", "CT Scan":"⊙",
+  "Echocardiography":"♥", "ECG":"〜", "Other":"⬜"
+};
+
+function renderImaging(){
+  const imgReports=reports.filter(r=>r.type==="imaging").sort((a,b)=>b.date.localeCompare(a.date));
+  if(!imgReports.length) return `
+    <div class="page-header">
+      <h1 class="page-title">Imaging</h1>
+      <div class="page-sub"><span class="report-lab">No imaging reports yet</span></div>
     </div>
-  `;
+    <div class="empty-card">
+      <p>Upload your X-ray, ultrasound, MRI or CT reports via <strong>+ Add Report</strong>.<br>
+      Findings and impressions will be extracted and stored here.</p>
+    </div>`;
+
+  return `
+    <div class="page-header">
+      <h1 class="page-title">Imaging</h1>
+      <div class="page-sub"><span class="report-lab">${imgReports.length} report${imgReports.length!==1?"s":""}</span></div>
+    </div>
+    <div class="img-list">
+      ${imgReports.map(rep=>(rep.imaging||[]).map(scan=>`
+        <div class="img-card">
+          <div class="img-card-head">
+            <div class="img-card-icon">${MODALITY_ICON[scan.modality]||"⬜"}</div>
+            <div>
+              <div class="img-card-title">${scan.modality}${scan.region?` — ${scan.region}`:""}</div>
+              <div class="img-card-meta">${rep.date} · ${rep.label}</div>
+            </div>
+            <button class="btn-del-hist" onclick="window.__del('${rep.id}')">Delete</button>
+          </div>
+          ${scan.findings?`
+          <div class="img-section">
+            <div class="img-sec-label">Findings</div>
+            <div class="img-sec-body">${scan.findings.replace(/\n/g,"<br>")}</div>
+          </div>`:""}
+          ${scan.impression?`
+          <div class="img-section img-section-imp">
+            <div class="img-sec-label">Impression / Conclusion</div>
+            <div class="img-sec-body img-impression">${scan.impression.replace(/\n/g,"<br>")}</div>
+          </div>`:""}
+        </div>`).join("")).join("")}
+    </div>`;
 }
 
 // ── HISTORY PAGE ───────────────────────────────────────────────────────
 function renderHistory(){
+  const allSorted=[...reports].sort((a,b)=>b.date.localeCompare(a.date));
   return `
     <div class="page-header">
-      <h1 class="page-title">Report History</h1>
-      <div class="page-sub"><span class="report-lab">${reports.length} reports on record</span></div>
+      <h1 class="page-title">History</h1>
+      <div class="page-sub"><span class="report-lab">${reports.length} total records</span></div>
     </div>
     <div class="hist-list">
-      ${[...reports].reverse().map(rep=>{
-        const flags=Object.entries(rep.metrics)
-          .filter(([k,v])=>getStatus(k,v)!=="normal"&&getStatus(k,v)!=="unknown");
+      ${allSorted.map(rep=>{
+        if(rep.type==="imaging"){
+          const scans=rep.imaging||[];
+          return `<div class="hist-card hist-card-img">
+            <div class="hist-top">
+              <div>
+                <div class="hist-date">${rep.date}</div>
+                <div class="hist-lab">${rep.label}</div>
+              </div>
+              <div class="hist-counts">
+                <span class="hc-img">Imaging · ${scans.length} scan${scans.length!==1?"s":""}</span>
+                <button class="btn-del-hist" onclick="window.__del('${rep.id}')">Delete</button>
+              </div>
+            </div>
+            <div class="hist-img-scans">
+              ${scans.map(s=>`<span class="img-scan-chip">${MODALITY_ICON[s.modality]||"⬜"} ${s.modality}${s.region?" · "+s.region:""}</span>`).join("")}
+            </div>
+          </div>`;
+        }
+        const flags=Object.entries(rep.metrics||{}).filter(([k,v])=>getStatus(k,v)!=="normal"&&getStatus(k,v)!=="unknown");
         const dangerCount=flags.filter(([k,v])=>getStatus(k,v)==="danger").length;
         const warnCount  =flags.filter(([k,v])=>getStatus(k,v)==="warn").length;
         return `<div class="hist-card">
@@ -463,7 +506,7 @@ function renderHistory(){
               <div class="hist-lab">${rep.label}</div>
             </div>
             <div class="hist-counts">
-              <span class="hc-total">${Object.keys(rep.metrics).length} metrics</span>
+              <span class="hc-total">${Object.keys(rep.metrics||{}).length} metrics</span>
               ${dangerCount?`<span class="hc-d">${dangerCount} critical</span>`:""}
               ${warnCount  ?`<span class="hc-w">${warnCount} watch</span>`:""}
               ${!dangerCount&&!warnCount?`<span class="hc-ok">All clear</span>`:""}
@@ -471,886 +514,772 @@ function renderHistory(){
             </div>
           </div>
           <div class="hist-metrics">
-            ${Object.entries(rep.metrics).slice(0,18).map(([k,v])=>{
+            ${Object.entries(rep.metrics||{}).slice(0,18).map(([k,v])=>{
               const st=getStatus(k,v);
               return `<span class="hm-chip hm-${st}">${RANGES[k]?.label||k}: ${v}</span>`;
             }).join("")}
-            ${Object.keys(rep.metrics).length>18?`<span class="hm-chip hm-more">+${Object.keys(rep.metrics).length-18} more</span>`:""}
+            ${Object.keys(rep.metrics||{}).length>18?`<span class="hm-chip hm-more">+${Object.keys(rep.metrics).length-18} more</span>`:""}
           </div>
         </div>`;
       }).join("")}
-    </div>
-  `;
+    </div>`;
 }
 
 // ── CHART DRAWING ──────────────────────────────────────────────────────
 function drawAllCharts(){
   Object.keys(RANGES).forEach(k=>{
     const c=document.getElementById(`dc-${k}`);
-    if(c) drawChart(c, k, 320, 80);
+    if(c) drawChart(c,k,320,80);
   });
 }
-
-function drawChart(canvas, key, W, H){
+function drawChart(canvas,key,W,H){
   const r=RANGES[key];
-  const pts=reports.map(rep=>rep.metrics[key]).filter(v=>v!=null);
+  const labReports=reports.filter(rep=>!rep.type||rep.type==="lab");
+  const pts=labReports.map(rep=>rep.metrics?.[key]).filter(v=>v!=null);
   if(!pts.length) return;
   const ctx=canvas.getContext("2d");
   ctx.clearRect(0,0,W,H);
-  const pad={l:32, r:12, t:8, b:22};
+  const pad={l:32,r:12,t:8,b:22};
   const IW=W-pad.l-pad.r, IH=H-pad.t-pad.b;
-
   const allV=[...pts,r.min,r.max];
   const lo=Math.min(...allV)*0.88, hi=Math.max(...allV)*1.1;
   const toY=v=>pad.t+IH-(((v-lo)/(hi-lo))*IH);
   const toX=i=>pts.length<2?pad.l+IW/2:pad.l+(i/(pts.length-1))*IW;
-
-  // Normal band
   ctx.fillStyle="rgba(34,197,94,0.08)";
-  ctx.fillRect(pad.l, toY(r.max), IW, toY(r.min)-toY(r.max));
-
-  // Ref lines
+  ctx.fillRect(pad.l,toY(r.max),IW,toY(r.min)-toY(r.max));
   ctx.save(); ctx.setLineDash([3,3]); ctx.lineWidth=1;
-  [r.min,r.max].forEach(v=>{
-    ctx.strokeStyle="rgba(34,197,94,0.4)";
-    ctx.beginPath(); ctx.moveTo(pad.l,toY(v)); ctx.lineTo(pad.l+IW,toY(v)); ctx.stroke();
-  });
+  [r.min,r.max].forEach(v=>{ ctx.strokeStyle="rgba(34,197,94,0.4)"; ctx.beginPath(); ctx.moveTo(pad.l,toY(v)); ctx.lineTo(pad.l+IW,toY(v)); ctx.stroke(); });
   ctx.restore();
-
-  // Y axis labels
-  ctx.fillStyle="#94a3b8"; ctx.font="9px Inter, sans-serif";
-  ctx.textAlign="right";
-  [r.min,r.max].forEach(v=>ctx.fillText(v, pad.l-4, toY(v)+3));
+  ctx.fillStyle="#94a3b8"; ctx.font="9px Inter,sans-serif"; ctx.textAlign="right";
+  [r.min,r.max].forEach(v=>ctx.fillText(v,pad.l-4,toY(v)+3));
   ctx.textAlign="center";
-  reports.filter(rep=>rep.metrics[key]!=null).forEach((rep,i)=>{
-    const allPts=reports.filter(r2=>r2.metrics[key]!=null);
-    const xi=allPts.indexOf(rep);
-    ctx.fillText(rep.date.slice(5), toX(xi), H-4);
+  labReports.filter(rep=>rep.metrics?.[key]!=null).forEach((rep,i)=>{
+    const allPts=labReports.filter(r2=>r2.metrics?.[key]!=null);
+    ctx.fillText(rep.date.slice(5),toX(allPts.indexOf(rep)),H-4);
   });
-
   if(pts.length===1){
     const st=getStatus(key,pts[0]);
     ctx.beginPath(); ctx.arc(toX(0),toY(pts[0]),5,0,Math.PI*2);
     ctx.fillStyle=st==="normal"?"#22c55e":st==="warn"?"#f59e0b":"#ef4444";
     ctx.fill(); return;
   }
-
-  // Area fill
   ctx.beginPath();
   pts.forEach((v,i)=>i===0?ctx.moveTo(toX(i),toY(v)):ctx.lineTo(toX(i),toY(v)));
   ctx.lineTo(toX(pts.length-1),H-pad.b); ctx.lineTo(toX(0),H-pad.b); ctx.closePath();
   const g=ctx.createLinearGradient(0,0,0,H);
   g.addColorStop(0,"rgba(59,130,246,0.12)"); g.addColorStop(1,"rgba(59,130,246,0)");
   ctx.fillStyle=g; ctx.fill();
-
-  // Line
   ctx.beginPath();
   pts.forEach((v,i)=>i===0?ctx.moveTo(toX(i),toY(v)):ctx.lineTo(toX(i),toY(v)));
   ctx.strokeStyle="#3b82f6"; ctx.lineWidth=2; ctx.lineJoin="round"; ctx.stroke();
-
-  // Dots
   pts.forEach((v,i)=>{
     const st=getStatus(key,v);
     ctx.beginPath(); ctx.arc(toX(i),toY(v),4,0,Math.PI*2);
     ctx.fillStyle=st==="normal"?"#22c55e":st==="warn"?"#f59e0b":"#ef4444";
-    ctx.strokeStyle="#fff"; ctx.lineWidth=1.5;
-    ctx.fill(); ctx.stroke();
+    ctx.strokeStyle="#fff"; ctx.lineWidth=1.5; ctx.fill(); ctx.stroke();
   });
 }
 
 // ── FLAGS ──────────────────────────────────────────────────────────────
 function computeFlags(){
-  const latest=reports[reports.length-1]?.metrics||{};
-  const danger=[], warn=[];
+  const labReports=reports.filter(r=>!r.type||r.type==="lab");
+  const latest=labReports[labReports.length-1]?.metrics||{};
+  const danger=[],warn=[];
   Object.entries(latest).forEach(([k,v])=>{
     const st=getStatus(k,v); if(!RANGES[k]) return;
     const f={metric:k,label:RANGES[k].label,value:v,unit:RANGES[k].unit,ref:`${RANGES[k].min}–${RANGES[k].max}`,status:st};
-    if(st==="danger") danger.push(f);
-    else if(st==="warn") warn.push(f);
+    if(st==="danger") danger.push(f); else if(st==="warn") warn.push(f);
   });
   return {danger,warn};
 }
 
 // ── PDF PARSING ────────────────────────────────────────────────────────
 const METRIC_PARSE_MAP = {
-  "uric acid":"uric_acid", "serum uric acid":"uric_acid",
-  "fasting glucose":"fasting_glucose", "fasting blood glucose":"fasting_glucose",
-  "fasting blood sugar":"fasting_glucose", "fbs":"fasting_glucose",
-  "hemoglobin":"hemoglobin", "haemoglobin":"hemoglobin",
-  "total cholesterol":"total_cholesterol", "cholesterol total":"total_cholesterol",
-  "triglycerides":"triglycerides", "triglyceride":"triglycerides",
-  "hdl cholesterol":"hdl", "hdl-c":"hdl",
-  "ldl cholesterol":"ldl", "ldl-c":"ldl", "ldl (direct)":"ldl",
-  "vldl cholesterol":"vldl", "vldl-c":"vldl",
-  "non hdl cholesterol":"non_hdl", "non-hdl":"non_hdl",
-  "tc/hdl ratio":"tc_hdl_ratio", "ldl/hdl ratio":"ldl_hdl_ratio",
-  "sgot":"sgot", "ast":"sgot", "aspartate aminotransferase":"sgot",
-  "sgpt":"sgpt", "alt":"sgpt", "alanine aminotransferase":"sgpt",
+  "uric acid":"uric_acid","serum uric acid":"uric_acid",
+  "fasting glucose":"fasting_glucose","fasting blood glucose":"fasting_glucose",
+  "fasting blood sugar":"fasting_glucose","fbs":"fasting_glucose",
+  "hemoglobin":"hemoglobin","haemoglobin":"hemoglobin",
+  "total cholesterol":"total_cholesterol","cholesterol total":"total_cholesterol",
+  "triglycerides":"triglycerides","triglyceride":"triglycerides",
+  "hdl cholesterol":"hdl","hdl-c":"hdl",
+  "ldl cholesterol":"ldl","ldl-c":"ldl","ldl (direct)":"ldl",
+  "vldl cholesterol":"vldl","vldl-c":"vldl",
+  "non hdl cholesterol":"non_hdl","non-hdl":"non_hdl",
+  "tc/hdl ratio":"tc_hdl_ratio","ldl/hdl ratio":"ldl_hdl_ratio",
+  "sgot":"sgot","ast":"sgot","aspartate aminotransferase":"sgot",
+  "sgpt":"sgpt","alt":"sgpt","alanine aminotransferase":"sgpt",
   "alkaline phosphatase":"alp",
-  "ggt":"ggt", "gamma gt":"ggt", "gamma glutamyl transferase":"ggt",
-  "bilirubin, total":"bilirubin_total", "bilirubin total":"bilirubin_total", "total bilirubin":"bilirubin_total",
-  "bilirubin, direct":"bilirubin_direct", "direct bilirubin":"bilirubin_direct",
-  "bilirubin, indirect":"bilirubin_indirect", "indirect bilirubin":"bilirubin_indirect",
-  "total protein":"total_protein", "protein, total":"total_protein",
-  "albumin":"albumin", "globulin":"globulin", "a/g ratio":"ag_ratio",
-  "creatinine":"creatinine", "serum creatinine":"creatinine",
-  "blood urea nitrogen":"bun", "bun":"bun",
-  "urea":"urea", "serum urea":"urea", "blood urea":"urea",
-  "sodium":"sodium", "potassium":"potassium", "chloride":"chloride",
-  "25-oh vitamin d":"vitamin_d", "25 oh vitamin d":"vitamin_d",
-  "vitamin d":"vitamin_d", "vit d":"vitamin_d",
-  "vitamin b12":"vitamin_b12", "vit b12":"vitamin_b12", "cyanocobalamin":"vitamin_b12",
+  "ggt":"ggt","gamma gt":"ggt","gamma glutamyl transferase":"ggt",
+  "bilirubin, total":"bilirubin_total","bilirubin total":"bilirubin_total","total bilirubin":"bilirubin_total",
+  "bilirubin, direct":"bilirubin_direct","direct bilirubin":"bilirubin_direct",
+  "bilirubin, indirect":"bilirubin_indirect","indirect bilirubin":"bilirubin_indirect",
+  "total protein":"total_protein","protein, total":"total_protein",
+  "albumin":"albumin","globulin":"globulin","a/g ratio":"ag_ratio",
+  "creatinine":"creatinine","serum creatinine":"creatinine",
+  "blood urea nitrogen":"bun","bun":"bun",
+  "urea":"urea","serum urea":"urea","blood urea":"urea",
+  "sodium":"sodium","potassium":"potassium","chloride":"chloride",
+  "25-oh vitamin d":"vitamin_d","25 oh vitamin d":"vitamin_d","vitamin d":"vitamin_d",
+  "vitamin b12":"vitamin_b12","vit b12":"vitamin_b12","cyanocobalamin":"vitamin_b12",
   "calcium":"calcium",
-  "tsh":"tsh", "thyroid stimulating hormone":"tsh",
-  "triiodothyronine":"t3", "thyroxine":"t4",
-  "hba1c":"hba1c", "glycated hemoglobin":"hba1c", "haemoglobin a1c":"hba1c",
-  "wbc":"wbc", "total leucocyte count":"wbc", "total wbc count":"wbc", "tlc":"wbc",
-  "neutrophils":"neutrophils", "neutrophil":"neutrophils",
-  "lymphocytes":"lymphocytes", "lymphocyte":"lymphocytes",
-  "monocytes":"monocytes", "monocyte":"monocytes",
-  "eosinophils":"eosinophils", "eosinophil":"eosinophils",
-  "basophils":"basophils",
-  "platelet count":"platelets", "platelets":"platelets",
-  "mean platelet volume":"mpv", "mpv":"mpv",
-  "platelet distribution width":"pdw", "pdw":"pdw",
-  "esr":"esr", "erythrocyte sedimentation rate":"esr",
-  "serum iron":"iron_serum", "iron, serum":"iron_serum",
-  "tibc":"tibc", "total iron binding capacity":"tibc",
-  "uibc":"uibc",
+  "tsh":"tsh","thyroid stimulating hormone":"tsh",
+  "hba1c":"hba1c","glycated hemoglobin":"hba1c","haemoglobin a1c":"hba1c",
+  "wbc":"wbc","total leucocyte count":"wbc","total wbc count":"wbc","tlc":"wbc",
+  "neutrophils":"neutrophils","lymphocytes":"lymphocytes",
+  "monocytes":"monocytes","eosinophils":"eosinophils","basophils":"basophils",
+  "platelet count":"platelets","platelets":"platelets",
+  "mean platelet volume":"mpv","mpv":"mpv",
+  "platelet distribution width":"pdw","pdw":"pdw",
+  "esr":"esr","erythrocyte sedimentation rate":"esr",
+  "serum iron":"iron_serum","iron, serum":"iron_serum",
+  "tibc":"tibc","total iron binding capacity":"tibc","uibc":"uibc",
   "transferrin saturation":"transferrin_sat",
   "prolactin":"prolactin",
-  "testosterone, total":"testosterone", "total testosterone":"testosterone", "testosterone":"testosterone",
-  "cortisol":"cortisol", "serum cortisol":"cortisol",
-  "prostate specific antigen":"psa", "psa":"psa",
-  "follicle stimulating hormone":"fsh", "fsh":"fsh",
-  "luteinizing hormone":"lh", "lh":"lh",
+  "testosterone, total":"testosterone","total testosterone":"testosterone","testosterone":"testosterone",
+  "cortisol":"cortisol","serum cortisol":"cortisol",
+  "prostate specific antigen":"psa","psa":"psa",
+  "follicle stimulating hormone":"fsh","fsh":"fsh",
+  "luteinizing hormone":"lh","lh":"lh",
 };
 
+const IMAGING_KEYWORDS = /\b(x[\s\-]?ray|xray|radiograph|ultrasound|usg|sonograph|mri|magnetic resonance|ct[\s\-]scan|computed tomography|echocardiograph|echo\b|ecg|electrocardiograph|mammograph|dexa|bone density|pet scan|nuclear medicine|doppler)\b/i;
+const IMAGING_SECTIONS  = /\b(findings|impression|conclusion|clinical indication|technique|protocol|procedure)\s*[:\-]/i;
+
+function isImagingReport(text, metricsCount) {
+  if(!text) return false;
+  return IMAGING_KEYWORDS.test(text) || (IMAGING_SECTIONS.test(text) && metricsCount < 5);
+}
+
+function extractImagingData(text) {
+  const lower = text.toLowerCase();
+  // Modality
+  let modality = "Other";
+  if(/\bx[\s\-]?ray\b|radiograph/i.test(text))          modality="X-Ray";
+  else if(/ultrasound|usg|sonograph|doppler/i.test(text)) modality="Ultrasound";
+  else if(/\bmri\b|magnetic resonance/i.test(text))       modality="MRI";
+  else if(/ct[\s\-]scan|computed tomography/i.test(text)) modality="CT Scan";
+  else if(/echocardiograph|echo\b/i.test(text))           modality="Echocardiography";
+  else if(/\becg\b|electrocardiograph/i.test(text))       modality="ECG";
+
+  // Body region — look for common terms anywhere in text
+  let region = "";
+  const regionMatch = text.match(/\b(chest|abdomen|pelvis|abdomen.*pelvis|spine|lumbar|cervical|thoracic|knee|hip|shoulder|wrist|ankle|foot|hand|neck|brain|liver|kidney|thyroid|gallbladder|prostate|breast|pelvis|uterus|ovary|scrotal|cardiac|heart|aorta|carotid)\b/i);
+  if(regionMatch) region = regionMatch[1].charAt(0).toUpperCase()+regionMatch[1].slice(1).toLowerCase();
+
+  // Findings
+  const findMatch = text.match(/\bfindings?\s*[:\-]\s*([\s\S]*?)(?=\n\s*(?:impression|conclusion|opinion|recommendation|note\b)|$)/i);
+  const findings  = findMatch ? findMatch[1].trim().slice(0,3000) : "";
+
+  // Impression
+  const impMatch   = text.match(/\b(?:impression|conclusion|opinion)\s*[:\-]\s*([\s\S]*?)(?=\n\s*[A-Z]{3,}[\s:]|$)/i);
+  const impression = impMatch ? impMatch[1].trim().slice(0,1000) : "";
+
+  // If neither found, store the first 2000 chars as findings
+  const fallback = (!findings && !impression) ? text.trim().slice(0,2000) : "";
+
+  return { modality, region, findings: findings||fallback, impression };
+}
+
 function extractDateFromText(text) {
-  // Indian lab date patterns: DD/MM/YYYY or DD-MM-YYYY, also DD Month YYYY
-  const t = text.toLowerCase();
-  const monthMap = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
-
-  // Pattern 1: date labels followed by DD/MM/YYYY or DD-MM-YYYY
-  const labeled = text.match(/(?:collection\s*date|report\s*date|sample\s*date|date\s*of\s*(?:collection|report|sample))[\s:–-]+(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](20\d{2})/i);
-  if (labeled) {
-    const [,d,m,y] = labeled;
-    return `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
-  }
-
-  // Pattern 2: bare DD/MM/YYYY near start of text (first 500 chars)
-  const bare = text.slice(0,800).match(/(\d{1,2})[\/\-]((?:0[1-9]|1[0-2]|\d{1,2}))[\/\-](20\d{2})/);
-  if (bare) {
-    const [,d,m,y] = bare;
-    if(parseInt(d)<=31 && parseInt(m)<=12)
-      return `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
-  }
-
-  // Pattern 3: DD Month YYYY
+  const labeled = text.match(/(?:collection\s*date|report\s*date|sample\s*date|date\s*of\s*(?:collection|report|sample))[\s:–\-]+(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](20\d{2})/i);
+  if(labeled){ const[,d,m,y]=labeled; return `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`; }
+  const bare = text.slice(0,800).match(/(\d{1,2})[\/\-](0[1-9]|1[0-2]|\d)[\/\-](20\d{2})/);
+  if(bare){ const[,d,m,y]=bare; if(parseInt(d)<=31&&parseInt(m)<=12) return `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`; }
   const textDate = text.match(/(\d{1,2})\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+(20\d{2})/i);
-  if (textDate) {
-    const months = {january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12};
-    const [,d,mon,y] = textDate;
-    const m = months[mon.toLowerCase()];
-    return `${y}-${String(m).padStart(2,'0')}-${d.padStart(2,'0')}`;
-  }
-
+  if(textDate){ const months={january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12}; const[,d,mon,y]=textDate; return `${y}-${String(months[mon.toLowerCase()]).padStart(2,'0')}-${d.padStart(2,'0')}`; }
   return null;
 }
 
 function extractMetrics(text) {
-  const lower = text.toLowerCase().replace(/\n/g," ");
-  const metrics = {};
-  const entries = Object.entries(METRIC_PARSE_MAP).sort((a,b)=>b[0].length-a[0].length);
-  for (const [label, key] of entries) {
-    if (metrics[key]) continue;
-    const idx = lower.indexOf(label);
-    if (idx === -1) continue;
-    const slice = text.slice(idx+label.length, idx+label.length+160);
-    const match = slice.match(/[^a-zA-Z%](\d{1,6}(?:\.\d{1,3})?)/);
-    if (match) {
-      const val = parseFloat(match[1]);
-      if (!isNaN(val) && val > 0 && val < 100000) metrics[key] = val;
-    }
+  const lower=text.toLowerCase().replace(/\n/g," ");
+  const metrics={};
+  const entries=Object.entries(METRIC_PARSE_MAP).sort((a,b)=>b[0].length-a[0].length);
+  for(const[label,key] of entries){
+    if(metrics[key]) continue;
+    const idx=lower.indexOf(label); if(idx===-1) continue;
+    const slice=text.slice(idx+label.length,idx+label.length+160);
+    const match=slice.match(/[^a-zA-Z%](\d{1,6}(?:\.\d{1,3})?)/);
+    if(match){ const val=parseFloat(match[1]); if(!isNaN(val)&&val>0&&val<100000) metrics[key]=val; }
   }
   return metrics;
 }
 
 async function parsePDFFile(file) {
   try {
-    const pdfjsLib = window["pdfjs-dist/build/pdf"] || window.pdfjsLib;
-    if (!pdfjsLib) return { metrics: {}, date: null };
-    pdfjsLib.GlobalWorkerOptions.workerSrc =
-      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-    const buf = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
-    let text = "";
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const content = await page.getTextContent();
-      text += content.items.map(item => item.str + " ").join("") + "\n";
+    // PDF.js loaded as UMD sets window.pdfjsLib
+    const lib = window.pdfjsLib || window["pdfjs-dist/build/pdf"];
+    if(!lib){ console.warn("PDF.js not loaded"); return {metrics:{},date:null,text:"",isImaging:false}; }
+    lib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+    const buf=await file.arrayBuffer();
+    const pdf=await lib.getDocument({data:buf}).promise;
+    let text="";
+    for(let i=1;i<=pdf.numPages;i++){
+      const page=await pdf.getPage(i);
+      const content=await page.getTextContent();
+      text+=content.items.map(item=>item.str+" ").join("")+"\n";
     }
-    return { metrics: extractMetrics(text), date: extractDateFromText(text) };
-  } catch(e) {
-    console.error("PDF parse error:", e);
-    return { metrics: {}, date: null };
+    const metrics=extractMetrics(text);
+    const date=extractDateFromText(text);
+    const isImg=isImagingReport(text,Object.keys(metrics).length);
+    return {metrics,date,text,isImaging:isImg};
+  } catch(e){
+    console.error("PDF parse error:",e);
+    return {metrics:{},date:null,text:"",isImaging:false};
   }
 }
 
-// ── ADD REPORT MODAL ────────────────────────────────────────────────────
-let uploadedFiles = []; // [{name, metrics, count}]
-let mergedMetrics = {};
-let detectedDate  = null;
+// ── MODAL STATE ────────────────────────────────────────────────────────
+let uploadedFiles=[], mergedMetrics={}, detectedDate=null;
+let imagingFiles=[]; // files detected as imaging
 
-window.openModal = () => {
-  uploadedFiles = []; mergedMetrics = {}; detectedDate = null;
-  document.getElementById("modal").style.display = "flex";
+window.openModal=()=>{
+  uploadedFiles=[]; mergedMetrics={}; detectedDate=null; imagingFiles=[];
+  document.getElementById("modal").style.display="flex";
   renderModalUpload();
 };
-window.closeModal = () => document.getElementById("modal").style.display = "none";
+window.closeModal=()=>document.getElementById("modal").style.display="none";
 
-function renderModalUpload() {
-  document.getElementById("modal-inner").innerHTML = `
+function renderModalUpload(){
+  document.getElementById("modal-inner").innerHTML=`
     <div class="m-head">
       <h2>Add Report</h2>
       <button class="m-close" onclick="closeModal()">✕</button>
     </div>
     <div class="m-upload-body">
-
       <div class="m-meta-row">
-        <label class="m-meta-label">
-          Report Date
+        <label class="m-meta-label">Report Date
           <input type="date" id="nd" value="${new Date().toISOString().slice(0,10)}"/>
           <span class="m-meta-hint">Auto-filled from PDF if found</span>
         </label>
-        <label class="m-meta-label">
-          Lab / Source
+        <label class="m-meta-label">Lab / Source
           <input type="text" id="nl" placeholder="e.g. Tata 1mg, Apollo"/>
         </label>
       </div>
 
+      <!-- Entire zone is clickable — triggers hidden input -->
       <div class="upload-zone" id="upload-zone"
-        ondragover="event.preventDefault();this.classList.add('dz-over')"
-        ondragleave="this.classList.remove('dz-over')"
-        ondrop="handleDrop(event)">
+        onclick="document.getElementById('_file_input').click()"
+        ondragover="event.preventDefault();event.stopPropagation();this.classList.add('dz-over')"
+        ondragleave="event.stopPropagation();this.classList.remove('dz-over')"
+        ondrop="event.stopPropagation();handleDrop(event)">
         <div class="dz-icon">↑</div>
-        <div class="dz-text">Drop PDF lab reports here</div>
-        <div class="dz-sub">or <label class="dz-link">select files
-          <input type="file" id="file-input" accept=".pdf" multiple style="display:none"
-            onchange="handleFileInput(this)"/>
-        </label></div>
-        <div class="dz-hint">Multiple files OK — values are merged, later file wins on conflict</div>
+        <div class="dz-text">Click here or drop PDF files</div>
+        <div class="dz-sub">Lab reports, X-rays, ultrasounds, MRIs — all supported</div>
+        <div class="dz-hint">Multiple files OK · Values auto-extracted</div>
       </div>
+      <!-- Hidden input lives outside the zone to avoid click-loop -->
+      <input type="file" id="_file_input" accept=".pdf" multiple style="display:none"
+        onchange="handleFileInput(this)"/>
 
       <div id="file-list"></div>
-
-      <div id="upload-actions" style="display:none">
-        <label class="add-more-btn">
+      <div id="upload-actions" style="display:none" class="upload-actions">
+        <label class="add-more-btn" onclick="event.stopPropagation()">
           + Add another file
-          <input type="file" accept=".pdf" multiple style="display:none"
-            onchange="handleFileInput(this)"/>
+          <input type="file" accept=".pdf" multiple style="display:none" onchange="handleFileInput(this)"/>
         </label>
-        <button class="review-btn" onclick="renderModalReview()">Review & Save →</button>
+        <button class="review-btn" onclick="goToReview()">Review & Save →</button>
       </div>
-
       <div class="m-divider"><span>or</span></div>
-      <button class="m-manual-btn" onclick="renderModalReview()">Enter values manually</button>
-    </div>
-  `;
+      <button class="m-manual-btn" onclick="renderModalLabReview()">Enter lab values manually</button>
+    </div>`;
 }
 
-window.handleDrop = async (e) => {
+window.handleDrop=async(e)=>{
   e.preventDefault();
   document.getElementById("upload-zone").classList.remove("dz-over");
-  await processFiles(Array.from(e.dataTransfer.files).filter(f=>f.type==="application/pdf"));
+  await processFiles(Array.from(e.dataTransfer.files).filter(f=>f.type==="application/pdf"||f.name.endsWith(".pdf")));
 };
-window.handleFileInput = async (input) => {
+window.handleFileInput=async(input)=>{
+  if(!input.files.length) return;
   await processFiles(Array.from(input.files));
+  input.value=""; // reset so same file can be re-added
 };
 
-async function processFiles(files) {
-  for (const file of files) {
-    const li = document.createElement("div");
-    li.className = "file-item fi-loading";
-    li.id = `fi-${file.name.replace(/\W/g,"_")}`;
-    li.innerHTML = `<span class="fi-name">${file.name}</span><span class="fi-status">Parsing…</span>`;
+async function processFiles(files){
+  if(!files.length) return;
+  for(const file of files){
+    const safeId=`fi_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const li=document.createElement("div");
+    li.className="file-item fi-loading"; li.id=safeId;
+    li.innerHTML=`<span class="fi-spinner"></span><span class="fi-name">${file.name}</span><span class="fi-status">Reading PDF…</span>`;
     document.getElementById("file-list").appendChild(li);
 
-    const { metrics, date } = await parsePDFFile(file);
-    const count = Object.keys(metrics).length;
+    const {metrics,date,text,isImaging}=await parsePDFFile(file);
+    const count=Object.keys(metrics).length;
 
-    // Merge into global
-    Object.assign(mergedMetrics, metrics);
-    if (date && !detectedDate) {
-      detectedDate = date;
-      const nd = document.getElementById("nd");
-      if (nd) nd.value = date;
+    if(date&&!detectedDate){
+      detectedDate=date;
+      const nd=document.getElementById("nd");
+      if(nd) nd.value=date;
     }
 
-    uploadedFiles.push({ name: file.name, metrics, count });
-    li.className = `file-item ${count>0?"fi-ok":"fi-warn"}`;
-    li.innerHTML = `
-      <span class="fi-icon">${count>0?"✓":"!"}</span>
-      <span class="fi-name">${file.name}</span>
-      <span class="fi-count">${count>0?`${count} values found`:"No values parsed"}</span>
-      <button class="fi-remove" onclick="removeFile('${file.name.replace(/'/g,"\\'")}')">×</button>`;
-
-    document.getElementById("upload-actions").style.display = "flex";
+    if(isImaging){
+      const imgData=extractImagingData(text);
+      imagingFiles.push({name:file.name,rawText:text,imgData,date});
+      li.className="file-item fi-img";
+      li.innerHTML=`
+        <span class="fi-icon-img">${MODALITY_ICON[imgData.modality]||"⬜"}</span>
+        <div class="fi-info">
+          <span class="fi-name">${file.name}</span>
+          <span class="fi-tag">Imaging · ${imgData.modality}${imgData.region?" · "+imgData.region:""}</span>
+        </div>
+        <button class="fi-remove" onclick="removeUploadedFile('${safeId}','imaging')">×</button>`;
+    } else {
+      Object.assign(mergedMetrics,metrics);
+      uploadedFiles.push({id:safeId,name:file.name,metrics,count});
+      li.className=`file-item ${count>0?"fi-ok":"fi-warn"}`;
+      li.innerHTML=`
+        <span class="fi-icon">${count>0?"✓":"!"}</span>
+        <div class="fi-info">
+          <span class="fi-name">${file.name}</span>
+          <span class="fi-tag">${count>0?count+" values found":"No values parsed — check manually"}</span>
+        </div>
+        <button class="fi-remove" onclick="removeUploadedFile('${safeId}','lab')">×</button>`;
+    }
+    document.getElementById("upload-actions").style.display="flex";
   }
 }
 
-window.removeFile = (name) => {
-  uploadedFiles = uploadedFiles.filter(f=>f.name!==name);
-  // Recompute merged
-  mergedMetrics = {};
-  uploadedFiles.forEach(f=>Object.assign(mergedMetrics, f.metrics));
-  const el = document.getElementById(`fi-${name.replace(/\W/g,"_")}`);
-  if (el) el.remove();
-  if (!uploadedFiles.length) document.getElementById("upload-actions").style.display = "none";
+window.removeUploadedFile=(safeId,type)=>{
+  if(type==="lab"){
+    uploadedFiles=uploadedFiles.filter(f=>f.id!==safeId);
+    mergedMetrics={}; uploadedFiles.forEach(f=>Object.assign(mergedMetrics,f.metrics));
+  } else {
+    imagingFiles.shift(); // simplified — remove first imaging
+  }
+  document.getElementById(safeId)?.remove();
+  if(!uploadedFiles.length&&!imagingFiles.length)
+    document.getElementById("upload-actions").style.display="none";
 };
 
-function renderModalReview() {
-  const groups = [...new Set(Object.values(RANGES).map(r=>r.group))];
-  const date  = document.getElementById("nd")?.value || new Date().toISOString().slice(0,10);
-  const label = document.getElementById("nl")?.value || "";
-  const parsedCount = Object.keys(mergedMetrics).length;
+window.goToReview=()=>{
+  // If we have imaging files, go to imaging review first, then lab
+  if(imagingFiles.length) renderModalImagingReview(0);
+  else renderModalLabReview();
+};
 
-  document.getElementById("modal-inner").innerHTML = `
+// ── IMAGING REVIEW MODAL ───────────────────────────────────────────────
+function renderModalImagingReview(idx){
+  const f=imagingFiles[idx];
+  const d=f.imgData;
+  const date=document.getElementById("nd")?.value||detectedDate||new Date().toISOString().slice(0,10);
+  const label=document.getElementById("nl")?.value||"";
+  document.getElementById("modal-inner").innerHTML=`
     <div class="m-head">
-      <h2>Review & Save</h2>
+      <h2>Imaging Report ${imagingFiles.length>1?`(${idx+1}/${imagingFiles.length})`:" "}</h2>
       <button class="m-close" onclick="closeModal()">✕</button>
     </div>
-    ${parsedCount>0 ? `<div class="m-notice m-notice-ok">
-      ✓ ${parsedCount} values parsed from ${uploadedFiles.length} file${uploadedFiles.length!==1?"s":""}
-      — highlighted fields were auto-filled. Correct anything before saving.
-    </div>` : `<div class="m-notice m-notice-info">No PDF values found — enter values manually below.</div>`}
+    <div class="m-notice m-notice-info">
+      Detected as <strong>${d.modality}</strong> report — review and edit the extracted text below before saving.
+    </div>
+    <div class="img-review-body">
+      <div class="m-meta-row m-meta-top">
+        <label class="m-meta-label">Report Date
+          <input type="date" id="nd" value="${date}"/>
+        </label>
+        <label class="m-meta-label">Lab / Source
+          <input type="text" id="nl" value="${label}" placeholder="e.g. Apollo Diagnostics"/>
+        </label>
+      </div>
+      <div class="img-review-fields">
+        <label class="m-meta-label" style="flex:1;min-width:120px">Modality
+          <select id="img-modality" class="img-select">
+            ${["X-Ray","Ultrasound","MRI","CT Scan","Echocardiography","ECG","Other"].map(m=>`<option ${m===d.modality?"selected":""}>${m}</option>`).join("")}
+          </select>
+        </label>
+        <label class="m-meta-label" style="flex:2">Body Region
+          <input type="text" id="img-region" value="${d.region}" placeholder="e.g. Chest, Abdomen, Knee"/>
+        </label>
+      </div>
+      <label class="img-textarea-label">Findings
+        <textarea id="img-findings" class="img-textarea" rows="7" placeholder="Clinical findings from the report…">${d.findings}</textarea>
+      </label>
+      <label class="img-textarea-label">Impression / Conclusion
+        <textarea id="img-impression" class="img-textarea" rows="4" placeholder="Radiologist's impression…">${d.impression}</textarea>
+      </label>
+      ${f.rawText?`
+      <details class="raw-text-details">
+        <summary>View raw extracted text</summary>
+        <pre class="raw-text-pre">${f.rawText.slice(0,3000).replace(/</g,"&lt;")}</pre>
+      </details>`:""}
+    </div>
+    <div class="m-foot">
+      <button class="m-back" onclick="renderModalUpload()">← Back</button>
+      <button class="m-save" onclick="submitImagingReport(${idx})">
+        ${idx<imagingFiles.length-1||(uploadedFiles.length>0||Object.keys(mergedMetrics).length>0)?"Next →":"Save Report"}
+      </button>
+    </div>`;
+}
+
+window.submitImagingReport=async(idx)=>{
+  const date=document.getElementById("nd").value;
+  const label=document.getElementById("nl").value||"Unknown";
+  const modality=document.getElementById("img-modality").value;
+  const region=document.getElementById("img-region").value.trim();
+  const findings=document.getElementById("img-findings").value.trim();
+  const impression=document.getElementById("img-impression").value.trim();
+  if(!date){alert("Select a date");return;}
+  const rep={
+    id:`${date}-img-${Date.now()}`,
+    date,label,
+    type:"imaging",
+    imaging:[{modality,region,findings,impression}],
+    metrics:{}
+  };
+  await window.__save(rep);
+  // After saving this imaging report, check if more imaging or lab to process
+  if(idx<imagingFiles.length-1) renderModalImagingReview(idx+1);
+  else if(uploadedFiles.length>0||Object.keys(mergedMetrics).length>0) renderModalLabReview();
+  // else modal closes via __save
+};
+
+// ── LAB REVIEW MODAL ──────────────────────────────────────────────────
+function renderModalLabReview(){
+  const groups=[...new Set(Object.values(RANGES).map(r=>r.group))];
+  const date=document.getElementById("nd")?.value||new Date().toISOString().slice(0,10);
+  const label=document.getElementById("nl")?.value||"";
+  const parsedCount=Object.keys(mergedMetrics).length;
+  document.getElementById("modal-inner").innerHTML=`
+    <div class="m-head">
+      <h2>Lab Values</h2>
+      <button class="m-close" onclick="closeModal()">✕</button>
+    </div>
+    ${parsedCount>0?`<div class="m-notice m-notice-ok">✓ ${parsedCount} values auto-filled from ${uploadedFiles.length} file${uploadedFiles.length!==1?"s":""}. Highlighted fields were parsed — correct anything before saving.</div>`
+    :`<div class="m-notice m-notice-info">No values auto-parsed — enter manually below.</div>`}
     <div class="m-meta-row m-meta-top">
-      <label class="m-meta-label">
-        Report Date
+      <label class="m-meta-label">Report Date
         <input type="date" id="nd" value="${date}"/>
         ${detectedDate?`<span class="m-meta-hint">Auto-detected from PDF</span>`:""}
       </label>
-      <label class="m-meta-label">
-        Lab / Source
+      <label class="m-meta-label">Lab / Source
         <input type="text" id="nl" value="${label}" placeholder="e.g. Tata 1mg"/>
       </label>
     </div>
     <div class="m-groups">
       ${groups.map(g=>{
-        const keys = Object.keys(RANGES).filter(k=>RANGES[k].group===g);
-        return `
-          <div class="m-group">
-            <div class="m-gtitle">${g}</div>
-            <div class="m-fields">
-              ${keys.map(k=>{
-                const r = RANGES[k];
-                const val = mergedMetrics[k];
-                const st  = val != null ? getStatus(k,val) : "";
-                return `<label class="m-field ${val!=null?"mf-found":""}">
-                  <span class="mf-label">${r.label} <em>${r.unit}</em></span>
-                  <input type="number" step="any" id="f-${k}"
-                    placeholder="${r.min}–${r.max}"
-                    ${val!=null?`value="${val}"`:""}
-                    class="${st?"fi-"+st:""}"/>
-                </label>`;
-              }).join("")}
-            </div>
-          </div>`;
+        const keys=Object.keys(RANGES).filter(k=>RANGES[k].group===g);
+        return `<div class="m-group">
+          <div class="m-gtitle">${g}</div>
+          <div class="m-fields">
+            ${keys.map(k=>{
+              const r=RANGES[k], val=mergedMetrics[k], st=val!=null?getStatus(k,val):"";
+              return `<label class="m-field ${val!=null?"mf-found":""}">
+                <span class="mf-label">${r.label} <em>${r.unit}</em></span>
+                <input type="number" step="any" id="f-${k}"
+                  placeholder="${r.min}–${r.max}"
+                  ${val!=null?`value="${val}"`:""}
+                  class="${st?"fi-"+st:""}"/>
+              </label>`;
+            }).join("")}
+          </div>
+        </div>`;
       }).join("")}
     </div>
     <div class="m-foot">
       <button class="m-back" onclick="renderModalUpload()">← Back</button>
-      <button class="m-save" onclick="submitReport()">Save Report</button>
-    </div>
-  `;
+      <button class="m-save" onclick="submitLabReport()">Save Report</button>
+    </div>`;
 }
 
-window.submitReport = async () => {
-  const date  = document.getElementById("nd").value;
-  const label = document.getElementById("nl").value || "Unknown Lab";
-  if (!date) { alert("Select a date"); return; }
-  const metrics = {};
+window.submitLabReport=async()=>{
+  const date=document.getElementById("nd").value;
+  const label=document.getElementById("nl").value||"Unknown Lab";
+  if(!date){alert("Select a date");return;}
+  const metrics={};
   Object.keys(RANGES).forEach(k=>{
-    const el = document.getElementById(`f-${k}`);
-    if (el && el.value !== "") metrics[k] = parseFloat(el.value);
+    const el=document.getElementById(`f-${k}`);
+    if(el&&el.value!=="") metrics[k]=parseFloat(el.value);
   });
-  if (!Object.keys(metrics).length) { alert("Enter at least one value"); return; }
-  await window.__save({ id:date, date, label, metrics });
+  if(!Object.keys(metrics).length){alert("Enter at least one value");return;}
+  await window.__save({id:date,date,label,metrics});
 };
 </script>
 
 <style>
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-:root {
-  --bg:         #f0f4f8;
-  --surface:    #ffffff;
-  --surface2:   #f8fafc;
-  --border:     rgba(15,23,42,0.09);
-  --border2:    rgba(15,23,42,0.15);
-  --shadow:     0 1px 3px rgba(15,23,42,0.08), 0 1px 2px rgba(15,23,42,0.05);
-  --shadow-md:  0 4px 12px rgba(15,23,42,0.10), 0 2px 4px rgba(15,23,42,0.06);
-  --text:       #0f172a;
-  --text2:      #475569;
-  --text3:      #94a3b8;
-  --accent:     #2563eb;
-  --accent-bg:  #eff6ff;
-
-  --danger:     #dc2626;
-  --danger-bg:  #fff1f2;
-  --danger-b:   #fecdd3;
-  --danger-acc: #fee2e2;
-
-  --warn:       #d97706;
-  --warn-bg:    #fffbeb;
-  --warn-b:     #fde68a;
-  --warn-acc:   #fef3c7;
-
-  --good:       #16a34a;
-  --good-bg:    #f0fdf4;
-  --good-b:     #bbf7d0;
-  --good-acc:   #dcfce7;
-
-  --r:          10px;
-  --font:       'Inter', -apple-system, sans-serif;
-  --mono:       'Geist Mono', 'Fira Code', monospace;
-  --serif:      'Instrument Serif', Georgia, serif;
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+:root{
+  --bg:#f0f4f8;
+  --surface:#ffffff;
+  --surface2:#f8fafc;
+  --border:rgba(15,23,42,0.09);
+  --border2:rgba(15,23,42,0.15);
+  --shadow:0 1px 3px rgba(15,23,42,0.08),0 1px 2px rgba(15,23,42,0.05);
+  --shadow-md:0 4px 16px rgba(15,23,42,0.10),0 2px 4px rgba(15,23,42,0.06);
+  --text:#0f172a;--text2:#475569;--text3:#94a3b8;
+  --accent:#2563eb;--accent-bg:#eff6ff;
+  --danger:#dc2626;--danger-bg:#fff1f2;--danger-b:#fecdd3;--danger-acc:#fee2e2;
+  --warn:#d97706;--warn-bg:#fffbeb;--warn-b:#fde68a;--warn-acc:#fef3c7;
+  --good:#16a34a;--good-bg:#f0fdf4;--good-b:#bbf7d0;--good-acc:#dcfce7;
+  --r:10px;
+  --font:'Inter',-apple-system,sans-serif;
+  --mono:'Geist Mono','Fira Code',monospace;
+  --serif:'Instrument Serif',Georgia,serif;
 }
-
-html, body {
-  height: 100%;
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font);
-  font-size: 14px;
-  line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
-}
-button { font-family: var(--font); cursor: pointer; }
-input  { font-family: var(--font); }
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--font);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;}
+button{font-family:var(--font);cursor:pointer;}
+input,select,textarea{font-family:var(--font);}
 
 /* ── AUTH ── */
-#auth-screen {
-  display: flex; align-items: center; justify-content: center; min-height: 100vh;
-  background: linear-gradient(135deg, #eff6ff 0%, #f0fdf4 100%);
-}
-.auth-box {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: 16px; padding: 52px 44px; text-align: center;
-  width: 380px; box-shadow: var(--shadow-md);
-}
-.auth-logo {
-  font-family: var(--serif); font-size: 3rem; font-style: italic;
-  color: var(--text); margin-bottom: 8px;
-}
-.auth-logo span { color: var(--accent); }
-.auth-sub { color: var(--text2); font-size: 0.82rem; margin-bottom: 32px; }
-.btn-g {
-  display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%;
-  padding: 12px 20px; background: var(--text); color: #fff; border: none;
-  border-radius: 8px; font-size: 0.88rem; font-weight: 500; transition: opacity 0.15s;
-}
-.btn-g:hover { opacity: 0.88; }
-.g-ic { width: 18px; height: 18px; }
+#auth-screen{display:flex;align-items:center;justify-content:center;min-height:100vh;background:linear-gradient(135deg,#eff6ff 0%,#f0fdf4 100%);}
+.auth-box{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:52px 44px;text-align:center;width:380px;box-shadow:var(--shadow-md);}
+.auth-logo{font-family:var(--serif);font-size:3rem;font-style:italic;color:var(--text);margin-bottom:8px;}
+.auth-logo span{color:var(--accent);}
+.auth-sub{color:var(--text2);font-size:0.82rem;margin-bottom:32px;}
+.btn-g{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:12px 20px;background:var(--text);color:#fff;border:none;border-radius:8px;font-size:0.88rem;font-weight:500;transition:opacity 0.15s;}
+.btn-g:hover{opacity:0.88;}
+.g-ic{width:18px;height:18px;}
 
-/* ── APP SHELL ── */
-#app { display: none; grid-template-columns: 230px 1fr; min-height: 100vh; }
+/* ── APP ── */
+#app{display:none;grid-template-columns:230px 1fr;min-height:100vh;}
 
 /* ── SIDEBAR ── */
-#sidebar {
-  background: var(--surface);
-  border-right: 1px solid var(--border);
-  display: flex; flex-direction: column;
-  position: sticky; top: 0; height: 100vh;
-  overflow-y: auto; padding: 24px 0;
-}
-.sb-brand {
-  display: flex; align-items: center; gap: 12px;
-  padding: 0 20px 20px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 8px;
-}
-.sb-logo {
-  width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0;
-  background: linear-gradient(135deg, var(--accent), #7c3aed);
-  display: flex; align-items: center; justify-content: center;
-  font-family: var(--serif); font-style: italic; font-size: 1.1rem; color: #fff;
-}
-.sb-name { font-size: 0.85rem; font-weight: 600; color: var(--text); }
-.sb-meta { font-size: 0.72rem; color: var(--text3); }
+#sidebar{background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;overflow-y:auto;padding:24px 0;}
+.sb-brand{display:flex;align-items:center;gap:12px;padding:0 20px 20px;border-bottom:1px solid var(--border);margin-bottom:8px;}
+.sb-logo{width:36px;height:36px;border-radius:10px;flex-shrink:0;background:linear-gradient(135deg,var(--accent),#7c3aed);display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-style:italic;font-size:1.1rem;color:#fff;}
+.sb-name{font-size:0.85rem;font-weight:600;color:var(--text);}
+.sb-meta{font-size:0.72rem;color:var(--text3);}
+.sb-status-strip{padding:10px 20px 14px;display:flex;flex-wrap:wrap;gap:6px;border-bottom:1px solid var(--border);margin-bottom:8px;}
+.ss-chip{font-size:0.72rem;font-weight:500;padding:3px 9px;border-radius:20px;}
+.ss-danger{background:var(--danger-acc);color:var(--danger);}
+.ss-warn{background:var(--warn-acc);color:var(--warn);}
+.ss-ok{background:var(--good-acc);color:var(--good);}
+.sb-nav{flex:1;padding:4px 12px;}
+.nav-item{display:flex;align-items:center;gap:8px;width:100%;padding:8px 10px;border-radius:7px;border:none;background:transparent;color:var(--text2);font-size:0.82rem;text-align:left;transition:color 0.12s,background 0.12s;}
+.nav-item:hover{color:var(--text);background:var(--bg);}
+.nav-item.active{color:var(--accent);background:var(--accent-bg);font-weight:500;}
+.nav-label{flex:1;}
+.nav-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+.nd{background:var(--danger);} .nw{background:var(--warn);}
+.nav-img-badge{font-size:0.65rem;background:var(--accent-bg);color:var(--accent);padding:1px 6px;border-radius:10px;}
+.sb-footer{padding:16px 12px 0;border-top:1px solid var(--border);margin-top:8px;display:flex;flex-direction:column;gap:8px;}
+.btn-add-report{padding:9px 14px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:0.82rem;font-weight:500;transition:background 0.15s;}
+.btn-add-report:hover{background:#1d4ed8;}
+.btn-so{padding:7px 14px;background:transparent;color:var(--text3);border:1px solid var(--border2);border-radius:8px;font-size:0.78rem;}
+.btn-so:hover{color:var(--text);}
 
-.sb-status-strip {
-  padding: 10px 20px 14px;
-  display: flex; flex-wrap: wrap; gap: 6px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 8px;
-}
-.ss-chip { font-size: 0.72rem; font-weight: 500; padding: 3px 9px; border-radius: 20px; }
-.ss-danger { background: var(--danger-acc); color: var(--danger); }
-.ss-warn   { background: var(--warn-acc);   color: var(--warn); }
-.ss-ok     { background: var(--good-acc);   color: var(--good); }
-
-.sb-nav { flex: 1; padding: 4px 12px; }
-.nav-item {
-  display: flex; align-items: center; gap: 8px; width: 100%;
-  padding: 8px 10px; border-radius: 7px; border: none; background: transparent;
-  color: var(--text2); font-size: 0.82rem; text-align: left;
-  transition: color 0.12s, background 0.12s;
-}
-.nav-item:hover  { color: var(--text); background: var(--bg); }
-.nav-item.active {
-  color: var(--accent); background: var(--accent-bg); font-weight: 500;
-}
-.nav-label { flex: 1; }
-.nav-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-.nd { background: var(--danger); }
-.nw { background: var(--warn); }
-
-.sb-footer {
-  padding: 16px 12px 0;
-  border-top: 1px solid var(--border);
-  margin-top: 8px;
-  display: flex; flex-direction: column; gap: 8px;
-}
-.btn-add-report {
-  padding: 9px 14px; background: var(--accent); color: #fff; border: none;
-  border-radius: 8px; font-size: 0.82rem; font-weight: 500;
-  transition: background 0.15s;
-}
-.btn-add-report:hover { background: #1d4ed8; }
-.btn-so {
-  padding: 7px 14px; background: transparent; color: var(--text3);
-  border: 1px solid var(--border2); border-radius: 8px; font-size: 0.78rem;
-}
-.btn-so:hover { color: var(--text); }
-
-/* ── MAIN CONTENT ── */
-#main-content {
-  padding: 44px 52px 80px;
-  overflow-y: auto;
-  background: var(--bg);
-  max-width: 900px;
-}
-
-.page-header { margin-bottom: 32px; }
-.ph-left { display: flex; flex-direction: column; gap: 8px; }
-.page-title {
-  font-family: var(--serif); font-size: 2.2rem; font-style: italic;
-  font-weight: 400; color: var(--text); letter-spacing: -0.01em;
-}
-.page-sub { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.report-date-badge {
-  font-family: var(--mono); font-size: 0.8rem; font-weight: 500;
-  background: var(--text); color: #fff;
-  padding: 3px 10px; border-radius: 6px;
-}
-.report-lab   { font-size: 0.82rem; color: var(--text2); }
-.report-prev  { font-size: 0.76rem; color: var(--text3); }
-.empty-state  { margin-top: 20px; color: var(--text3); font-size: 0.9rem; }
+/* ── MAIN ── */
+#main-content{padding:44px 52px 80px;overflow-y:auto;background:var(--bg);max-width:900px;}
+.page-header{margin-bottom:32px;}
+.page-title{font-family:var(--serif);font-size:2.2rem;font-style:italic;font-weight:400;color:var(--text);}
+.page-sub{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px;}
+.report-date-badge{font-family:var(--mono);font-size:0.8rem;font-weight:500;background:var(--text);color:#fff;padding:3px 10px;border-radius:6px;}
+.report-lab{font-size:0.82rem;color:var(--text2);}
+.report-prev{font-size:0.76rem;color:var(--text3);}
+.empty-state{margin-top:20px;color:var(--text3);font-size:0.9rem;}
+.empty-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:32px;color:var(--text2);line-height:1.7;box-shadow:var(--shadow);}
 
 /* ── OVERVIEW SECTIONS ── */
-.ov-section {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  box-shadow: var(--shadow);
-  overflow: hidden;
-  margin-bottom: 20px;
-}
+.ov-section{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);overflow:hidden;margin-bottom:20px;}
+.ov-sec-head{display:flex;align-items:center;gap:10px;padding:16px 24px;border-bottom:1px solid var(--border);}
+.ov-sec-danger{background:var(--danger-bg);}
+.ov-sec-warn{background:var(--warn-bg);}
+.ov-sec-good{background:var(--good-bg);}
+.ov-sec-icon{font-size:0.9rem;}
+.ov-sec-danger .ov-sec-icon{color:var(--danger);}
+.ov-sec-warn   .ov-sec-icon{color:var(--warn);}
+.ov-sec-good   .ov-sec-icon{color:var(--good);}
+.ov-sec-title{font-size:0.95rem;font-weight:600;}
+.ov-sec-danger .ov-sec-title{color:var(--danger);}
+.ov-sec-warn   .ov-sec-title{color:var(--warn);}
+.ov-sec-good   .ov-sec-title{color:var(--good);}
+.ov-sec-sub{font-size:0.78rem;color:var(--text3);}
+.ov-sec-body{padding:0 24px;}
 
-.ov-sec-head {
-  display: flex; align-items: center; gap: 10px;
-  padding: 16px 24px;
-  border-bottom: 1px solid var(--border);
-}
-.ov-sec-danger { background: var(--danger-bg); }
-.ov-sec-warn   { background: var(--warn-bg); }
-.ov-sec-good   { background: var(--good-bg); }
-
-.ov-sec-icon  { font-size: 0.9rem; }
-.ov-sec-danger .ov-sec-icon { color: var(--danger); }
-.ov-sec-warn   .ov-sec-icon { color: var(--warn); }
-.ov-sec-good   .ov-sec-icon { color: var(--good); }
-
-.ov-sec-title { font-size: 0.95rem; font-weight: 600; }
-.ov-sec-danger .ov-sec-title { color: var(--danger); }
-.ov-sec-warn   .ov-sec-title { color: var(--warn); }
-.ov-sec-good   .ov-sec-title { color: var(--good); }
-
-.ov-sec-sub { font-size: 0.78rem; color: var(--text3); }
-
-.ov-sec-body { padding: 0 24px; }
-
-/* ── METRIC CARD ROW ── */
-.mc-row {
-  padding: 18px 0;
-  border-bottom: 1px solid var(--border);
-}
-.mc-row:last-child { border-bottom: none; }
-
-.mc-top {
-  display: flex; justify-content: space-between; align-items: flex-start;
-  margin-bottom: 10px;
-}
-.mc-left  { display: flex; flex-direction: column; gap: 4px; }
-.mc-right { display: flex; align-items: baseline; gap: 5px; }
-
-.mc-name  { font-size: 0.92rem; font-weight: 500; color: var(--text); }
-.mc-trend { font-size: 0.75rem; font-weight: 500; width: fit-content; padding: 2px 7px; border-radius: 4px; }
-.tg { background: var(--good-acc);   color: var(--good); }
-.tb { background: var(--danger-acc); color: var(--danger); }
-.tn { background: var(--accent-bg);  color: var(--accent); }
-.tu { background: var(--surface2);   color: var(--text3); }
-
-.mc-val       { font-family: var(--mono); font-size: 1.7rem; font-weight: 500; line-height: 1; }
-.mc-val-danger{ color: var(--danger); }
-.mc-val-warn  { color: var(--warn); }
-.mc-val-normal{ color: var(--good); }
-
-.mc-unit { font-family: var(--mono); font-size: 0.78rem; color: var(--text3); }
-.mc-ref  { font-size: 0.72rem; color: var(--text3); margin-top: 6px; }
+/* ── METRIC ROW ── */
+.mc-row{padding:18px 0;border-bottom:1px solid var(--border);}
+.mc-row:last-child{border-bottom:none;}
+.mc-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;}
+.mc-left{display:flex;flex-direction:column;gap:4px;}
+.mc-right{display:flex;align-items:baseline;gap:5px;}
+.mc-name{font-size:0.92rem;font-weight:500;color:var(--text);}
+.mc-trend{font-size:0.75rem;font-weight:500;padding:2px 7px;border-radius:4px;}
+.tg{background:var(--good-acc);color:var(--good);}
+.tb{background:var(--danger-acc);color:var(--danger);}
+.tn{background:var(--accent-bg);color:var(--accent);}
+.tu{background:var(--surface2);color:var(--text3);}
+.mc-val{font-family:var(--mono);font-size:1.7rem;font-weight:500;line-height:1;}
+.mc-val-danger{color:var(--danger);}
+.mc-val-warn{color:var(--warn);}
+.mc-val-normal{color:var(--good);}
+.mc-unit{font-family:var(--mono);font-size:0.78rem;color:var(--text3);}
+.mc-ref{font-size:0.72rem;color:var(--text3);margin-top:6px;}
 
 /* ── RANGE BAR ── */
-.rb-wrap {
-  position: relative;
-  padding-bottom: 16px;
-}
-.rb-track {
-  height: 6px;
-  background: #e2e8f0;
-  border-radius: 3px;
-  position: relative;
-  margin: 4px 0 2px;
-}
-.rb-zone {
-  position: absolute; top: 0; height: 100%;
-  background: rgba(34,197,94,0.25);
-  border: 1px solid rgba(34,197,94,0.4);
-  border-radius: 2px;
-}
-.rb-dot {
-  position: absolute; top: 50%;
-  transform: translate(-50%, -50%);
-  width: 12px; height: 12px;
-  border-radius: 50%;
-  border: 2px solid var(--surface);
-  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-  z-index: 1;
-}
-.rb-normal { background: var(--good); }
-.rb-warn   { background: var(--warn); }
-.rb-danger { background: var(--danger); }
-
-.rb-labels {
-  position: relative; height: 14px;
-  font-family: var(--mono); font-size: 0.65rem; color: var(--text3);
-}
-.rb-labels span {
-  position: absolute; transform: translateX(-50%);
-}
+.rb-wrap{position:relative;padding-bottom:16px;}
+.rb-track{height:6px;background:#e2e8f0;border-radius:3px;position:relative;margin:4px 0 2px;}
+.rb-zone{position:absolute;top:0;height:100%;background:rgba(34,197,94,0.2);border:1px solid rgba(34,197,94,0.4);border-radius:2px;}
+.rb-dot{position:absolute;top:50%;transform:translate(-50%,-50%);width:13px;height:13px;border-radius:50%;border:2px solid var(--surface);box-shadow:0 1px 3px rgba(0,0,0,0.2);z-index:1;}
+.rb-normal{background:var(--good);}
+.rb-warn{background:var(--warn);}
+.rb-danger{background:var(--danger);}
+.rb-labels{position:relative;height:14px;font-family:var(--mono);font-size:0.65rem;color:var(--text3);}
+.rb-labels span{position:absolute;transform:translateX(-50%);}
 
 /* ── DETAIL GRID ── */
-.detail-grid { display: grid; grid-template-columns: repeat(2,1fr); gap: 14px; }
-.detail-card {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--r); padding: 18px;
-  box-shadow: var(--shadow);
-}
-.dc-normal { border-top: 2px solid var(--good-b); }
-.dc-warn   { border-top: 2px solid var(--warn-b); }
-.dc-danger { border-top: 2px solid var(--danger-b); }
-.dc-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
-.dc-name   { font-size: 0.88rem; font-weight: 600; color: var(--text); }
-.dc-ref    { font-size: 0.7rem; color: var(--text3); margin-top: 3px; }
-.dc-right  { text-align: right; }
-.dc-val       { font-family: var(--mono); font-size: 1.5rem; font-weight: 500; line-height: 1; }
-.dc-val-danger{ color: var(--danger); }
-.dc-val-warn  { color: var(--warn); }
-.dc-val-normal{ color: var(--text); }
-.dc-unit   { font-family: var(--mono); font-size: 0.65rem; color: var(--text3); }
-.dc-delta  { font-size: 0.72rem; margin-top: 3px; }
-.dc-canvas { display: block; width: 100%; margin-top: 10px; }
-.dc-history{ display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
-.dh-pt     { font-family: var(--mono); font-size: 0.68rem; padding: 2px 7px; border-radius: 4px; }
-.dh-normal { background: var(--good-acc);   color: var(--good); }
-.dh-warn   { background: var(--warn-acc);   color: var(--warn); }
-.dh-danger { background: var(--danger-acc); color: var(--danger); }
-.d-pos { color: var(--good); } .d-neg { color: var(--danger); }
+.detail-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;}
+.detail-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px;box-shadow:var(--shadow);}
+.dc-normal{border-top:2px solid var(--good-b);}
+.dc-warn{border-top:2px solid var(--warn-b);}
+.dc-danger{border-top:2px solid var(--danger-b);}
+.dc-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;}
+.dc-name{font-size:0.88rem;font-weight:600;color:var(--text);}
+.dc-ref{font-size:0.7rem;color:var(--text3);margin-top:3px;}
+.dc-right{text-align:right;}
+.dc-val{font-family:var(--mono);font-size:1.5rem;font-weight:500;line-height:1;}
+.dc-val-danger{color:var(--danger);}
+.dc-val-warn{color:var(--warn);}
+.dc-val-normal{color:var(--text);}
+.dc-unit{font-family:var(--mono);font-size:0.65rem;color:var(--text3);}
+.dc-delta{font-size:0.72rem;margin-top:3px;}
+.dc-canvas{display:block;width:100%;margin-top:10px;}
+.dc-history{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px;}
+.dh-pt{font-family:var(--mono);font-size:0.68rem;padding:2px 7px;border-radius:4px;}
+.dh-normal{background:var(--good-acc);color:var(--good);}
+.dh-warn{background:var(--warn-acc);color:var(--warn);}
+.dh-danger{background:var(--danger-acc);color:var(--danger);}
+.d-pos{color:var(--good);}.d-neg{color:var(--danger);}
+
+/* ── IMAGING PAGE ── */
+.img-list{display:flex;flex-direction:column;gap:16px;}
+.img-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;box-shadow:var(--shadow);}
+.img-card-head{display:flex;align-items:center;gap:14px;padding:18px 20px;border-bottom:1px solid var(--border);background:var(--surface2);}
+.img-card-icon{font-size:1.8rem;flex-shrink:0;}
+.img-card-title{font-size:0.95rem;font-weight:600;color:var(--text);}
+.img-card-meta{font-size:0.75rem;color:var(--text3);margin-top:2px;}
+.img-section{padding:16px 20px;border-bottom:1px solid var(--border);}
+.img-section:last-child{border-bottom:none;}
+.img-section-imp{background:var(--accent-bg);}
+.img-sec-label{font-size:0.7rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);font-weight:600;margin-bottom:6px;}
+.img-sec-body{font-size:0.88rem;color:var(--text2);line-height:1.7;}
+.img-impression{color:var(--text);font-weight:500;}
 
 /* ── HISTORY ── */
-.hist-list { display: flex; flex-direction: column; gap: 14px; }
-.hist-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 20px; box-shadow: var(--shadow); }
-.hist-top  { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px; }
-.hist-date { font-family: var(--serif); font-size: 1.2rem; font-style: italic; color: var(--text); }
-.hist-lab  { font-size: 0.74rem; color: var(--text3); margin-top: 2px; }
-.hist-counts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
-.hc-total { font-size: 0.72rem; color: var(--text3); }
-.hc-d   { font-size: 0.72rem; background: var(--danger-acc); color: var(--danger); padding: 2px 8px; border-radius: 20px; }
-.hc-w   { font-size: 0.72rem; background: var(--warn-acc);   color: var(--warn);   padding: 2px 8px; border-radius: 20px; }
-.hc-ok  { font-size: 0.72rem; background: var(--good-acc);   color: var(--good);   padding: 2px 8px; border-radius: 20px; }
-.btn-del-hist {
-  background: transparent; border: 1px solid var(--danger-b); color: var(--danger);
-  padding: 3px 10px; border-radius: 6px; font-size: 0.72rem;
-}
-.hist-metrics { display: flex; flex-wrap: wrap; gap: 5px; }
-.hm-chip  { font-family: var(--mono); font-size: 0.68rem; padding: 3px 8px; border-radius: 5px; }
-.hm-normal{ background: var(--surface2); color: var(--text2); }
-.hm-warn  { background: var(--warn-acc);   color: var(--warn); }
-.hm-danger{ background: var(--danger-acc); color: var(--danger); }
-.hm-more  { background: var(--surface2);   color: var(--text3); }
+.hist-list{display:flex;flex-direction:column;gap:14px;}
+.hist-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:20px;box-shadow:var(--shadow);}
+.hist-card-img{border-left:3px solid var(--accent);}
+.hist-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;}
+.hist-date{font-family:var(--serif);font-size:1.2rem;font-style:italic;color:var(--text);}
+.hist-lab{font-size:0.74rem;color:var(--text3);margin-top:2px;}
+.hist-counts{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;}
+.hc-total{font-size:0.72rem;color:var(--text3);}
+.hc-d{font-size:0.72rem;background:var(--danger-acc);color:var(--danger);padding:2px 8px;border-radius:20px;}
+.hc-w{font-size:0.72rem;background:var(--warn-acc);color:var(--warn);padding:2px 8px;border-radius:20px;}
+.hc-ok{font-size:0.72rem;background:var(--good-acc);color:var(--good);padding:2px 8px;border-radius:20px;}
+.hc-img{font-size:0.72rem;background:var(--accent-bg);color:var(--accent);padding:2px 8px;border-radius:20px;}
+.btn-del-hist{background:transparent;border:1px solid var(--danger-b);color:var(--danger);padding:3px 10px;border-radius:6px;font-size:0.72rem;}
+.hist-metrics{display:flex;flex-wrap:wrap;gap:5px;}
+.hm-chip{font-family:var(--mono);font-size:0.68rem;padding:3px 8px;border-radius:5px;}
+.hm-normal{background:var(--surface2);color:var(--text2);}
+.hm-warn{background:var(--warn-acc);color:var(--warn);}
+.hm-danger{background:var(--danger-acc);color:var(--danger);}
+.hm-more{background:var(--surface2);color:var(--text3);}
+.hist-img-scans{display:flex;flex-wrap:wrap;gap:6px;}
+.img-scan-chip{font-size:0.78rem;background:var(--accent-bg);color:var(--accent);padding:4px 10px;border-radius:6px;}
 
 /* ── MODAL ── */
-#modal {
-  display: none; position: fixed; inset: 0; z-index: 200;
-  background: rgba(15,23,42,0.5); backdrop-filter: blur(4px);
-  align-items: center; justify-content: center; padding: 20px;
-}
-#modal-inner {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: 14px; width: 100%; max-width: 700px; max-height: 90vh;
-  overflow-y: auto; display: flex; flex-direction: column;
-  box-shadow: var(--shadow-md);
-}
-.m-head {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 20px 28px 16px; border-bottom: 1px solid var(--border);
-  position: sticky; top: 0; background: var(--surface); z-index: 1;
-}
-.m-head h2 { font-family: var(--serif); font-style: italic; font-size: 1.4rem; font-weight: 400; }
-.m-close {
-  background: var(--surface2); border: 1px solid var(--border);
-  color: var(--text2); width: 28px; height: 28px; border-radius: 7px; font-size: 0.9rem;
-}
-.m-notice {
-  margin: 16px 28px 0; padding: 10px 14px; border-radius: 8px;
-  font-size: 0.78rem; line-height: 1.5;
-}
-.m-notice-ok   { background: var(--good-acc);   color: var(--good);   border: 1px solid var(--good-b); }
-.m-notice-info { background: var(--accent-bg);   color: var(--accent); border: 1px solid #bfdbfe; }
+#modal{display:none;position:fixed;inset:0;z-index:200;background:rgba(15,23,42,0.5);backdrop-filter:blur(4px);align-items:center;justify-content:center;padding:20px;}
+#modal-inner{background:var(--surface);border:1px solid var(--border);border-radius:14px;width:100%;max-width:700px;max-height:90vh;overflow-y:auto;display:flex;flex-direction:column;box-shadow:var(--shadow-md);}
+.m-head{display:flex;justify-content:space-between;align-items:center;padding:20px 28px 16px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface);z-index:1;}
+.m-head h2{font-family:var(--serif);font-style:italic;font-size:1.4rem;font-weight:400;}
+.m-close{background:var(--surface2);border:1px solid var(--border);color:var(--text2);width:28px;height:28px;border-radius:7px;font-size:0.9rem;}
+.m-notice{margin:16px 28px 0;padding:10px 14px;border-radius:8px;font-size:0.78rem;line-height:1.5;}
+.m-notice-ok{background:var(--good-acc);color:var(--good);border:1px solid var(--good-b);}
+.m-notice-info{background:var(--accent-bg);color:var(--accent);border:1px solid #bfdbfe;}
 
-.m-upload-body  { padding: 0 28px 24px; display: flex; flex-direction: column; gap: 0; }
-.m-meta-row     { display: flex; gap: 16px; padding: 20px 0 18px; flex-wrap: wrap; }
-.m-meta-top     { padding: 20px 28px 0; }
-.m-meta-label   { display: flex; flex-direction: column; gap: 4px; font-size: 0.74rem; font-weight: 500; color: var(--text2); flex: 1; min-width: 160px; }
-.m-meta-label input {
-  background: var(--surface2); border: 1px solid var(--border2); color: var(--text);
-  padding: 9px 12px; border-radius: 8px; font-size: 0.84rem; margin-top: 2px;
-}
-.m-meta-label input:focus { outline: none; border-color: var(--accent); }
-.m-meta-hint { font-size: 0.68rem; color: var(--text3); font-weight: 400; }
+.m-upload-body{padding:0 28px 24px;display:flex;flex-direction:column;}
+.m-meta-row{display:flex;gap:16px;padding:20px 0 18px;flex-wrap:wrap;}
+.m-meta-top{padding:20px 28px 0;}
+.m-meta-label{display:flex;flex-direction:column;gap:4px;font-size:0.74rem;font-weight:500;color:var(--text2);flex:1;min-width:160px;}
+.m-meta-label input,.m-meta-label select{background:var(--surface2);border:1px solid var(--border2);color:var(--text);padding:9px 12px;border-radius:8px;font-size:0.84rem;margin-top:2px;}
+.m-meta-label input:focus,.m-meta-label select:focus{outline:none;border-color:var(--accent);}
+.m-meta-hint{font-size:0.68rem;color:var(--text3);font-weight:400;}
 
-.upload-zone {
-  border: 2px dashed var(--border2); border-radius: var(--r);
-  padding: 36px 24px; text-align: center; cursor: pointer;
-  transition: border-color 0.2s, background 0.2s;
-  background: var(--surface2);
+/* Upload zone — entire box is a click target */
+.upload-zone{
+  border:2px dashed var(--border2);border-radius:var(--r);
+  padding:40px 24px;text-align:center;cursor:pointer;
+  transition:border-color 0.2s,background 0.2s;
+  background:var(--surface2);
+  user-select:none;
 }
-.upload-zone.dz-over { border-color: var(--accent); background: var(--accent-bg); }
-.dz-icon { font-size: 1.8rem; color: var(--text3); margin-bottom: 10px; }
-.dz-text { font-size: 0.92rem; font-weight: 500; color: var(--text2); margin-bottom: 5px; }
-.dz-sub  { font-size: 0.8rem; color: var(--text3); margin-bottom: 8px; }
-.dz-link { color: var(--accent); cursor: pointer; text-decoration: underline; }
-.dz-hint { font-size: 0.7rem; color: var(--text3); }
+.upload-zone:hover{border-color:var(--accent);background:var(--accent-bg);}
+.upload-zone.dz-over{border-color:var(--accent);background:var(--accent-bg);}
+.dz-icon{font-size:2rem;color:var(--text3);margin-bottom:10px;}
+.dz-text{font-size:0.95rem;font-weight:600;color:var(--text2);margin-bottom:6px;}
+.dz-sub{font-size:0.8rem;color:var(--text3);margin-bottom:8px;}
+.dz-hint{font-size:0.7rem;color:var(--text3);}
 
-#file-list { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
-.file-item {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 14px; border-radius: 8px; font-size: 0.8rem;
-  border: 1px solid var(--border);
-}
-.fi-loading { background: var(--surface2); color: var(--text3); }
-.fi-ok   { background: var(--good-acc);   border-color: var(--good-b); }
-.fi-warn { background: var(--warn-acc);   border-color: var(--warn-b); }
-.fi-icon  { font-size: 0.85rem; }
-.fi-ok   .fi-icon { color: var(--good); }
-.fi-warn .fi-icon { color: var(--warn); }
-.fi-name  { flex: 1; font-weight: 500; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fi-count { font-size: 0.72rem; color: var(--text3); white-space: nowrap; }
-.fi-status { font-size: 0.72rem; color: var(--text3); }
-.fi-remove {
-  background: transparent; border: 1px solid var(--border2);
-  color: var(--text3); width: 22px; height: 22px; border-radius: 5px; font-size: 0.9rem;
-  flex-shrink: 0; display: flex; align-items: center; justify-content: center;
-}
+#file-list{display:flex;flex-direction:column;gap:6px;margin-top:12px;}
+.file-item{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;font-size:0.8rem;border:1px solid var(--border);}
+.fi-loading{background:var(--surface2);color:var(--text3);}
+.fi-ok{background:var(--good-acc);border-color:var(--good-b);}
+.fi-warn{background:var(--warn-acc);border-color:var(--warn-b);}
+.fi-img{background:var(--accent-bg);border-color:#bfdbfe;}
+.fi-spinner{width:14px;height:14px;border:2px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:spin 0.7s linear infinite;flex-shrink:0;}
+@keyframes spin{to{transform:rotate(360deg);}}
+.fi-icon{font-size:0.9rem;flex-shrink:0;}
+.fi-ok .fi-icon{color:var(--good);}
+.fi-warn .fi-icon{color:var(--warn);}
+.fi-icon-img{font-size:1.2rem;flex-shrink:0;}
+.fi-info{display:flex;flex-direction:column;gap:2px;flex:1;overflow:hidden;}
+.fi-name{font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:0.82rem;}
+.fi-tag{font-size:0.7rem;color:var(--text3);}
+.fi-status{font-size:0.72rem;color:var(--text3);}
+.fi-remove{background:transparent;border:1px solid var(--border2);color:var(--text3);width:22px;height:22px;border-radius:5px;font-size:0.9rem;flex-shrink:0;display:flex;align-items:center;justify-content:center;}
 
-#upload-actions {
-  display: none; flex-direction: row; align-items: center;
-  justify-content: space-between; margin-top: 14px; gap: 10px;
-}
-.add-more-btn {
-  font-size: 0.8rem; font-weight: 500; color: var(--accent);
-  cursor: pointer; padding: 8px 14px; border-radius: 7px;
-  border: 1px solid #bfdbfe; background: var(--accent-bg);
-  white-space: nowrap;
-}
-.review-btn {
-  padding: 9px 20px; background: var(--accent); color: #fff;
-  border: none; border-radius: 8px; font-size: 0.84rem; font-weight: 500;
-  white-space: nowrap;
-}
-.review-btn:hover { background: #1d4ed8; }
+.upload-actions{display:flex;flex-direction:row;align-items:center;justify-content:space-between;margin-top:14px;gap:10px;}
+.add-more-btn{font-size:0.8rem;font-weight:500;color:var(--accent);cursor:pointer;padding:8px 14px;border-radius:7px;border:1px solid #bfdbfe;background:var(--accent-bg);white-space:nowrap;}
+.review-btn{padding:9px 20px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:0.84rem;font-weight:500;white-space:nowrap;}
+.review-btn:hover{background:#1d4ed8;}
 
-.m-divider {
-  display: flex; align-items: center; gap: 12px;
-  color: var(--text3); font-size: 0.74rem; margin: 16px 0;
-}
-.m-divider::before, .m-divider::after { content:""; flex:1; height:1px; background: var(--border); }
-.m-manual-btn {
-  padding: 10px; background: transparent; color: var(--text2);
-  border: 1px solid var(--border2); border-radius: 8px; font-size: 0.82rem;
-}
-.m-manual-btn:hover { border-color: var(--accent); color: var(--accent); }
+.m-divider{display:flex;align-items:center;gap:12px;color:var(--text3);font-size:0.74rem;margin:16px 0;}
+.m-divider::before,.m-divider::after{content:"";flex:1;height:1px;background:var(--border);}
+.m-manual-btn{padding:10px;background:transparent;color:var(--text2);border:1px solid var(--border2);border-radius:8px;font-size:0.82rem;}
+.m-manual-btn:hover{border-color:var(--accent);color:var(--accent);}
 
-.m-groups { padding: 0 28px 8px; }
-.m-group  { margin-bottom: 22px; }
-.m-gtitle {
-  font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em;
-  color: var(--accent); font-weight: 600; margin-bottom: 10px;
-  padding-bottom: 6px; border-bottom: 1px solid var(--border);
-}
-.m-fields { display: grid; grid-template-columns: repeat(auto-fill,minmax(175px,1fr)); gap: 8px; }
-.m-field  { display: flex; flex-direction: column; gap: 3px; }
-.mf-label { font-size: 0.72rem; color: var(--text2); font-weight: 500; }
-.mf-label em { color: var(--text3); font-style: normal; font-weight: 400; margin-left: 3px; font-size: 0.65rem; }
-.m-field input {
-  background: var(--surface2); border: 1px solid var(--border); color: var(--text);
-  padding: 7px 10px; border-radius: 7px; font-size: 0.82rem;
-}
-.m-field input:focus { outline: none; border-color: var(--accent); background: #fff; }
-.mf-found input { border-color: var(--good-b); background: var(--good-acc); }
-.fi-warn   { border-color: var(--warn-b) !important; }
-.fi-danger { border-color: var(--danger-b) !important; }
+/* Imaging review */
+.img-review-body{padding:0 28px 8px;}
+.img-review-fields{display:flex;gap:14px;padding:16px 0 4px;flex-wrap:wrap;}
+.img-select{background:var(--surface2);border:1px solid var(--border2);color:var(--text);padding:9px 12px;border-radius:8px;font-size:0.84rem;margin-top:2px;}
+.img-textarea-label{display:flex;flex-direction:column;gap:6px;font-size:0.74rem;font-weight:500;color:var(--text2);margin-bottom:14px;padding:0 28px;}
+.img-textarea{background:var(--surface2);border:1px solid var(--border2);color:var(--text);padding:10px 12px;border-radius:8px;font-size:0.84rem;line-height:1.6;resize:vertical;}
+.img-textarea:focus{outline:none;border-color:var(--accent);background:#fff;}
+.raw-text-details{padding:0 28px 16px;}
+.raw-text-details summary{font-size:0.75rem;color:var(--text3);cursor:pointer;padding:8px 0;}
+.raw-text-pre{font-size:0.72rem;color:var(--text3);background:var(--surface2);padding:12px;border-radius:8px;white-space:pre-wrap;overflow:auto;max-height:200px;margin-top:8px;}
 
-.m-foot {
-  display: flex; justify-content: space-between; align-items: center; gap: 8px;
-  padding: 16px 28px; border-top: 1px solid var(--border);
-  position: sticky; bottom: 0; background: var(--surface);
-}
-.m-back {
-  padding: 8px 16px; background: transparent; color: var(--text3);
-  border: 1px solid var(--border2); border-radius: 7px; font-size: 0.8rem;
-}
-.m-save {
-  padding: 9px 24px; background: var(--accent); color: #fff;
-  border: none; border-radius: 7px; font-size: 0.84rem; font-weight: 500;
-}
-.m-save:hover { background: #1d4ed8; }
+/* Lab review */
+.m-groups{padding:0 28px 8px;}
+.m-group{margin-bottom:22px;}
+.m-gtitle{font-size:0.68rem;text-transform:uppercase;letter-spacing:0.08em;color:var(--accent);font-weight:600;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border);}
+.m-fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(175px,1fr));gap:8px;}
+.m-field{display:flex;flex-direction:column;gap:3px;}
+.mf-label{font-size:0.72rem;color:var(--text2);font-weight:500;}
+.mf-label em{color:var(--text3);font-style:normal;font-weight:400;margin-left:3px;font-size:0.65rem;}
+.m-field input{background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:7px;font-size:0.82rem;}
+.m-field input:focus{outline:none;border-color:var(--accent);background:#fff;}
+.mf-found input{border-color:var(--good-b);background:var(--good-acc);}
+.fi-warn{border-color:var(--warn-b)!important;}
+.fi-danger{border-color:var(--danger-b)!important;}
 
-::-webkit-scrollbar { width: 5px; height: 5px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+.m-foot{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:16px 28px;border-top:1px solid var(--border);position:sticky;bottom:0;background:var(--surface);}
+.m-back{padding:8px 16px;background:transparent;color:var(--text3);border:1px solid var(--border2);border-radius:7px;font-size:0.8rem;}
+.m-save{padding:9px 24px;background:var(--accent);color:#fff;border:none;border-radius:7px;font-size:0.84rem;font-weight:500;}
+.m-save:hover{background:#1d4ed8;}
 
-@media (max-width: 900px) {
-  #app { grid-template-columns: 1fr; }
-  #sidebar { position: relative; height: auto; }
-  #main-content { padding: 24px 20px 60px; }
-  .detail-grid { grid-template-columns: 1fr; }
+::-webkit-scrollbar{width:5px;height:5px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px;}
+
+@media(max-width:900px){
+  #app{grid-template-columns:1fr;}
+  #sidebar{position:relative;height:auto;}
+  #main-content{padding:24px 20px 60px;}
+  .detail-grid{grid-template-columns:1fr;}
 }
 </style>
 </head>
 <body>
-
-<!-- AUTH -->
 <div id="auth-screen">
   <div class="auth-box">
     <div class="auth-logo">Health<span>.</span></div>
@@ -1366,15 +1295,10 @@ input  { font-family: var(--font); }
     </button>
   </div>
 </div>
-
-<!-- APP -->
 <div id="app">
   <div id="sidebar"></div>
   <div id="main-content"></div>
 </div>
-
-<!-- MODAL -->
 <div id="modal"><div id="modal-inner"></div></div>
-
 </body>
 </html>
