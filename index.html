@@ -5,8 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Prashant · Health</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
 
 <script type="module">
 import { initializeApp }   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
@@ -38,6 +37,18 @@ const SEED_REPORTS = [
     sgot:72, sgpt:59, alp:61, ggt:30.3, bilirubin_total:0.36, bilirubin_direct:0.17,
     bilirubin_indirect:0.19, total_protein:7.4, albumin:4.6, globulin:2.83, ag_ratio:1.61,
     uric_acid:6.96, vitamin_d:17.8, vitamin_b12:272, tsh:4.61, t3:1.15, t4:7.59, psa:0.30
+  }},
+  { id:"2025-08-27", label:"Accuniq Scan", date:"2025-08-27", metrics:{
+    body_weight:73.4, fat_mass:16.8, body_fat_pct:22.9, smm:31.7,
+    bmi_scan:23.4, waist_hip_ratio:0.84, bmr_kcal:1592, total_body_water:41.3, ecw_ratio:0.394
+  }},
+  { id:"2026-04-26", label:"Accuniq Scan", date:"2026-04-26", metrics:{
+    body_weight:73.5, fat_mass:16.7, body_fat_pct:22.7, smm:31.9,
+    bmi_scan:23.2, waist_hip_ratio:0.85, bmr_kcal:1597, total_body_water:41.5, ecw_ratio:0.400
+  }},
+  { id:"2026-06-01", label:"Accuniq Scan", date:"2026-06-01", metrics:{
+    body_weight:76.9, fat_mass:19.4, body_fat_pct:25.2, smm:32.2,
+    bmi_scan:24.3, waist_hip_ratio:0.86, bmr_kcal:1613, total_body_water:42.0, ecw_ratio:0.392
   }},
   { id:"2026-05-29", label:"Tata 1mg", date:"2026-05-29", metrics:{
     hemoglobin:14.8, rbc:4.75, hct:43.2, mcv:91.0, mch:31.1, mchc:34.1, rdw_cv:11.7,
@@ -112,6 +123,16 @@ window.RANGES = {
   lh:                 {min:0.57, max:12.07, unit:"mIU/mL", label:"LH",                  group:"Hormones"},
   cortisol:           {min:5.27, max:22.45, unit:"µg/dL",  label:"Cortisol",            group:"Hormones"},
   psa:                {min:0,    max:2.0,   unit:"ng/mL",  label:"PSA",                 group:"Hormones"},
+  // ── BODY COMPOSITION (Accuniq scans) ──────────────────────────────
+  body_weight:        {min:60,   max:75,    unit:"kg",     label:"Weight",              group:"Body Composition"},
+  fat_mass:           {min:8,    max:14,    unit:"kg",     label:"Fat Mass",            group:"Body Composition"},
+  body_fat_pct:       {min:10,   max:20,    unit:"%",      label:"Body Fat %",          group:"Body Composition"},
+  smm:                {min:32,   max:40,    unit:"kg",     label:"Skeletal Muscle Mass",group:"Body Composition"},
+  bmi_scan:           {min:18.5, max:24.9,  unit:"kg/m²",  label:"BMI",                 group:"Body Composition"},
+  waist_hip_ratio:    {min:0.75, max:0.90,  unit:"",       label:"Waist-Hip Ratio",     group:"Body Composition"},
+  bmr_kcal:           {min:1500, max:2000,  unit:"kcal",   label:"Basal Metabolic Rate",group:"Body Composition"},
+  total_body_water:   {min:38,   max:50,    unit:"L",      label:"Total Body Water",    group:"Body Composition"},
+  ecw_ratio:          {min:0.36, max:0.38,  unit:"",       label:"ECW Ratio",           group:"Body Composition"},
 };
 
 window.getStatus = (key, val) => {
@@ -124,27 +145,25 @@ window.getStatus = (key, val) => {
 };
 
 // ── FIREBASE HELPERS ───────────────────────────────────────────────────
-async function saveReport(uid, r)   { await setDoc(doc(db,"users",uid,"reports",r.id), r); }
-async function loadReports(uid)     {
+async function saveReport(uid, r)  { await setDoc(doc(db,"users",uid,"reports",r.id), r); }
+async function loadReports(uid)    {
   const snap = await getDocs(collection(db,"users",uid,"reports"));
   const arr=[]; snap.forEach(d=>arr.push(d.data()));
   return arr.sort((a,b)=>a.date.localeCompare(b.date));
 }
-async function deleteReport(uid,id) { await deleteDoc(doc(db,"users",uid,"reports",id)); }
-async function seedIfEmpty(uid)     {
+async function deleteReport(uid,id){ await deleteDoc(doc(db,"users",uid,"reports",id)); }
+async function seedIfEmpty(uid)    {
   const snap = await getDocs(collection(db,"users",uid,"reports"));
   if(snap.empty) for(const r of SEED_REPORTS) await saveReport(uid,r);
 }
 
 async function writeSnapshot(allReports) {
-  const labReports    = allReports.filter(r=>!r.type || r.type==="lab");
-  const imagingReports= allReports.filter(r=>r.type==="imaging");
   const trends={};
-  labReports.forEach(rep=>Object.entries(rep.metrics||{}).forEach(([k,v])=>{
+  allReports.forEach(rep=>Object.entries(rep.metrics).forEach(([k,v])=>{
     if(!trends[k]) trends[k]=[];
     trends[k].push({date:rep.date,label:rep.label,value:v});
   }));
-  const latest = labReports[labReports.length-1]?.metrics||{};
+  const latest = allReports.length ? allReports[allReports.length-1].metrics : {};
   const flags = Object.entries(latest)
     .map(([k,v])=>({k,v,st:window.getStatus(k,v)}))
     .filter(x=>x.st!=="normal"&&x.st!=="unknown")
@@ -156,15 +175,11 @@ async function writeSnapshot(allReports) {
   await setDoc(doc(db,"claude_snapshot","health_data"),{
     patient:{name:"Prashant Yadav",age:32,sex:"Male",email:ALLOWED_EMAIL},
     lastUpdated:new Date().toISOString(),
-    reportCount:labReports.length,
-    imagingCount:imagingReports.length,
-    reportDates:labReports.map(r=>({date:r.date,label:r.label})),
-    latestReport:labReports[labReports.length-1]||null,
-    previousReport:labReports[labReports.length-2]||null,
-    imagingReports: imagingReports.map(r=>({
-      date:r.date, label:r.label, scans:r.imaging||[]
-    })),
-    trends, flags, allReports:labReports
+    reportCount:allReports.length,
+    reportDates:allReports.map(r=>({date:r.date,label:r.label})),
+    latestReport:allReports[allReports.length-1]||null,
+    previousReport:allReports[allReports.length-2]||null,
+    trends, flags, allReports
   });
 }
 
@@ -175,7 +190,7 @@ onAuthStateChanged(auth, async user=>{
   if(user){
     if(user.email!==ALLOWED_EMAIL){
       document.getElementById("auth-screen").innerHTML=
-        `<div class="auth-box"><p style="color:#dc2626">Access denied.</p>
+        `<div class="auth-box"><p style="color:#ff6b6b;font-size:1rem">Access denied.</p>
          <button class="btn-g" onclick="window.__so()">Sign out</button></div>`;
       return;
     }
@@ -196,7 +211,7 @@ window.__si  = async()=>{ try{ await signInWithPopup(auth,provider); }catch(e){ 
 window.__so  = ()=>signOut(auth);
 window.__sg  = g=>{ activeGroup=g; renderSidebar(); renderMain(); };
 window.__del = async id=>{
-  if(!confirm(`Delete this report?`)) return;
+  if(!confirm(`Delete report ${id}?`)) return;
   await deleteReport(currentUser.uid,id);
   reports=reports.filter(r=>r.id!==id);
   await writeSnapshot(reports); renderMain();
@@ -210,37 +225,36 @@ window.__save = async rep=>{
 };
 
 // ── SIDEBAR ────────────────────────────────────────────────────────────
-const NAV_GROUPS = ["Overview","Metabolic","Lipids","Liver","Kidney","CBC","Vitamins","Thyroid","Hormones","Iron","Imaging","History"];
+const NAV_GROUPS = ["Overview","Metabolic","Lipids","Liver","Kidney","CBC","Vitamins","Thyroid","Hormones","Iron","Body Composition","History"];
 const GROUP_ICONS = {
-  Overview:"⊡", Metabolic:"⬡", Lipids:"◎", Liver:"⬟", Kidney:"◇",
-  CBC:"⬢", Vitamins:"◉", Thyroid:"◈", Hormones:"◎", Iron:"⬡",
-  Imaging:"⬜", History:"≡"
+  Overview:"◈", Metabolic:"⬡", Lipids:"◎", Liver:"⬟", Kidney:"◇",
+  CBC:"⬢", Vitamins:"◉", Thyroid:"◈", Hormones:"◎", Iron:"⬡", "Body Composition":"◑", History:"≡"
 };
 
 function renderSidebar(){
   const flags = computeFlags();
-  const imgCount = reports.filter(r=>r.type==="imaging").length;
   document.getElementById("sidebar").innerHTML=`
     <div class="sb-brand">
-      <div class="sb-logo">H.</div>
+      <div class="sb-avatar">PY</div>
       <div>
         <div class="sb-name">Prashant Yadav</div>
-        <div class="sb-meta">Age 32 · ${reports.filter(r=>!r.type||r.type==="lab").length} lab report${reports.filter(r=>!r.type||r.type==="lab").length!==1?"s":""}</div>
+        <div class="sb-meta">${reports.length} report${reports.length!==1?"s":""} · Age 32</div>
       </div>
     </div>
-    <div class="sb-status-strip">
-      ${flags.danger.length ? `<span class="ss-chip ss-danger">▲ ${flags.danger.length} critical</span>`:""}
-      ${flags.warn.length   ? `<span class="ss-chip ss-warn">◉ ${flags.warn.length} watch</span>`:""}
-      ${!flags.danger.length&&!flags.warn.length ? `<span class="ss-chip ss-ok">✓ All clear</span>`:""}
+    <div class="sb-flags-mini">
+      ${flags.danger.length ? `<span class="flag-dot fd">▲ ${flags.danger.length} critical</span>`:""}
+      ${flags.warn.length   ? `<span class="flag-dot fw">▲ ${flags.warn.length} watch</span>`:""}
+      ${!flags.danger.length&&!flags.warn.length ? `<span class="flag-dot fn">✓ All clear</span>`:""}
     </div>
     <nav class="sb-nav">
       ${NAV_GROUPS.map(g=>{
-        const hasFlagD = !["Overview","History","Imaging"].includes(g) && flags.danger.some(f=>RANGES[f.metric]?.group===g);
-        const hasFlagW = !["Overview","History","Imaging"].includes(g) && flags.warn.some(f=>RANGES[f.metric]?.group===g);
-        const dot = hasFlagD ? `<span class="nav-dot nd"></span>` : hasFlagW ? `<span class="nav-dot nw"></span>` : "";
-        const badge = g==="Imaging" && imgCount>0 ? `<span class="nav-img-badge">${imgCount}</span>` : "";
+        const hasFlagD = g!=="Overview"&&g!=="History" && flags.danger.some(f=>RANGES[f.metric]?.group===g);
+        const hasFlagW = g!=="Overview"&&g!=="History" && flags.warn.some(f=>RANGES[f.metric]?.group===g);
+        const dot = hasFlagD?`<span class="nav-badge bd"></span>`:hasFlagW?`<span class="nav-badge bw"></span>`:"";
         return `<button class="nav-item ${activeGroup===g?"active":""}" onclick="window.__sg('${g}')">
-          <span class="nav-label">${g}</span>${dot}${badge}
+          <span class="nav-icon">${GROUP_ICONS[g]}</span>
+          <span class="nav-label">${g}</span>
+          ${dot}
         </button>`;
       }).join("")}
     </nav>
@@ -254,146 +268,129 @@ function renderSidebar(){
 // ── MAIN CONTENT ───────────────────────────────────────────────────────
 function renderMain(){
   const el = document.getElementById("main-content");
-  if(activeGroup==="Overview")    el.innerHTML = renderOverview();
+  if(activeGroup==="Overview")   el.innerHTML = renderOverview();
   else if(activeGroup==="History") el.innerHTML = renderHistory();
-  else if(activeGroup==="Imaging") el.innerHTML = renderImaging();
-  else                             el.innerHTML = renderGroup(activeGroup);
+  else el.innerHTML = renderGroup(activeGroup);
   requestAnimationFrame(()=>drawAllCharts());
 }
 
-// ── RANGE BAR ──────────────────────────────────────────────────────────
-function rangeBar(key, val) {
-  const r   = RANGES[key];
-  const st  = getStatus(key, val);
-  const span = r.max - r.min;
-  const lo  = Math.max(0, r.min - span * 0.6);
-  const hi  = r.max + span * 0.6;
-  const clamp = (v,a,b) => Math.max(a, Math.min(b,v));
-  const pct = v => ((clamp(v,lo,hi)-lo)/(hi-lo))*100;
-  return `
-    <div class="rb-wrap">
-      <div class="rb-track">
-        <div class="rb-zone" style="left:${pct(r.min)}%;width:${pct(r.max)-pct(r.min)}%"></div>
-        <div class="rb-dot rb-${st}" style="left:${pct(val)}%"></div>
-      </div>
-      <div class="rb-labels">
-        <span style="left:${pct(r.min)}%">${r.min}</span>
-        <span style="left:${pct(r.max)}%">${r.max}</span>
-      </div>
-    </div>`;
-}
-
 // ── OVERVIEW ───────────────────────────────────────────────────────────
-function computeSections() {
-  const labReports = reports.filter(r=>!r.type||r.type==="lab");
-  const latest = labReports[labReports.length-1]?.metrics || {};
-  const prev   = labReports[labReports.length-2]?.metrics || {};
-  const actNow=[], watch=[], wins=[];
+function renderOverview(){
+  const flags = computeFlags();
+  const latest = reports[reports.length-1]?.metrics||{};
+  const prev   = reports[reports.length-2]?.metrics||{};
 
-  Object.entries(latest).forEach(([k,v])=>{
-    if(!RANGES[k]) return;
-    const st=getStatus(k,v), prevVal=prev[k]??null, prevSt=prevVal!=null?getStatus(k,prevVal):null;
-    const trend=()=>{
-      if(prevVal==null) return {label:"New",cls:"tn"};
-      const diff=v-prevVal, pct=Math.abs(diff/prevVal);
-      if(pct<0.03) return {label:"Unchanged",cls:"tu"};
-      const rising=diff>0, good=(k==="hdl")?rising:!rising;
-      return {label:(rising?"↑ ":"↓ ")+Math.abs(diff).toFixed(1), cls:good?"tg":"tb"};
-    };
-    if(st==="danger") actNow.push({k,v,trend:trend()});
-    else if(st==="warn") watch.push({k,v,trend:trend()});
-    else if(st==="normal"&&prevSt&&prevSt!=="normal")
-      wins.push({k,v,trend:{label:`was ${prevVal}`,cls:"tg"}});
-  });
-  return {actNow,watch,wins};
-}
+  const hero = [
+    {key:"fasting_glucose", icon:"◈"},
+    {key:"ldl",             icon:"◎"},
+    {key:"hdl",             icon:"◉"},
+    {key:"uric_acid",       icon:"◇"},
+    {key:"sgot",            icon:"⬟"},
+    {key:"vitamin_d",       icon:"⬡"},
+    {key:"vitamin_b12",     icon:"⬢"},
+    {key:"prolactin",       icon:"◈"},
+    {key:"body_fat_pct",    icon:"◑"},
+    {key:"smm",             icon:"◉"},
+  ];
 
-function metricCard(item) {
-  const r=RANGES[item.k], st=getStatus(item.k,item.v);
-  return `
-    <div class="mc-row">
-      <div class="mc-top">
-        <div class="mc-left">
-          <span class="mc-name">${r.label}</span>
-          <span class="mc-trend ${item.trend.cls}">${item.trend.label}</span>
-        </div>
-        <div class="mc-right">
-          <span class="mc-val mc-val-${st}">${item.v}</span>
-          <span class="mc-unit">${r.unit}</span>
-        </div>
-      </div>
-      ${rangeBar(item.k,item.v)}
-      <div class="mc-ref">Reference: ${r.min}–${r.max} ${r.unit}</div>
-    </div>`;
-}
-
-function renderOverview() {
-  const {actNow,watch,wins}=computeSections();
-  const labReports=reports.filter(r=>!r.type||r.type==="lab");
-  const latest=labReports[labReports.length-1], prev=labReports[labReports.length-2];
-  if(!latest) return `<div class="page-header"><h1 class="page-title">Overview</h1><p class="empty-state">No lab reports yet — add your first report.</p></div>`;
+  const insights = computeInsights();
 
   return `
     <div class="page-header">
-      <h1 class="page-title">Overview</h1>
-      <div class="page-sub">
-        <span class="report-date-badge">${latest.date}</span>
-        <span class="report-lab">${latest.label}</span>
-        ${prev?`<span class="report-prev">Previous: ${prev.date} · ${prev.label}</span>`:""}
+      <div>
+        <h1 class="page-title">Overview</h1>
+        <div class="page-sub">Last updated ${reports[reports.length-1]?.date||"—"} · ${reports[reports.length-1]?.label||""}</div>
       </div>
     </div>
-    ${actNow.length?`
-    <div class="ov-section">
-      <div class="ov-sec-head ov-sec-danger">
-        <span class="ov-sec-icon">▲</span>
-        <span class="ov-sec-title">Act Now</span>
-        <span class="ov-sec-sub">${actNow.length} metric${actNow.length>1?"s":""} outside safe range</span>
-      </div>
-      <div class="ov-sec-body">${actNow.map(metricCard).join("")}</div>
+
+    <!-- HERO KPI STRIP -->
+    <div class="kpi-grid">
+      ${hero.map(({key,icon})=>{
+        const r=RANGES[key]; if(!r) return "";
+        const cur=latest[key], prv=prev[key];
+        if(cur==null) return "";
+        const st=getStatus(key,cur);
+        const delta=prv!=null?(cur-prv):null;
+        const sign=delta===null?"":delta>0?"↑":"↓";
+        const dClass=(key==="hdl")?(delta>0?"d-pos":"d-neg"):(delta>0?"d-neg":"d-pos");
+        return `<div class="kpi kpi-${st}">
+          <div class="kpi-icon">${icon}</div>
+          <div class="kpi-label">${r.label}</div>
+          <div class="kpi-val">${cur}<span class="kpi-unit"> ${r.unit}</span></div>
+          ${delta!==null?`<div class="kpi-delta ${dClass}">${sign}${Math.abs(delta).toFixed(1)}</div>`:""}
+          <div class="kpi-ref">${r.min}–${r.max}</div>
+        </div>`;
+      }).join("")}
+    </div>
+
+    <!-- INSIGHTS -->
+    ${insights.length?`
+    <div class="section-head"><span>Insights</span></div>
+    <div class="insights-grid">
+      ${insights.map(i=>`
+        <div class="insight insight-${i.type}">
+          <span class="i-icon">${i.icon}</span>
+          <span class="i-text">${i.text}</span>
+        </div>`).join("")}
     </div>`:""}
-    ${watch.length?`
-    <div class="ov-section">
-      <div class="ov-sec-head ov-sec-warn">
-        <span class="ov-sec-icon">◉</span>
-        <span class="ov-sec-title">Watch</span>
-        <span class="ov-sec-sub">${watch.length} metric${watch.length>1?"s":""} borderline — monitor closely</span>
-      </div>
-      <div class="ov-sec-body">${watch.map(metricCard).join("")}</div>
+
+    <!-- FLAGGED METRICS -->
+    ${flags.danger.length||flags.warn.length?`
+    <div class="section-head"><span>Needs Attention</span></div>
+    <div class="flags-table">
+      <div class="ft-head"><span>Metric</span><span>Value</span><span>Reference</span><span>Status</span><span>Trend</span></div>
+      ${[...flags.danger,...flags.warn].map(f=>{
+        const pts=reports.map(r=>r.metrics[f.metric]).filter(v=>v!=null);
+        const trend=pts.length>1?(pts[pts.length-1]>pts[pts.length-2]?"↑ Rising":"↓ Falling"):"—";
+        return `<div class="ft-row">
+          <span class="ft-name">${f.label}</span>
+          <span class="ft-val">${f.value} ${f.unit}</span>
+          <span class="ft-ref">${f.ref}</span>
+          <span class="ft-st ft-${f.status}">${f.status==="danger"?"Critical":"Watch"}</span>
+          <span class="ft-trend">${trend}</span>
+        </div>`;
+      }).join("")}
     </div>`:""}
-    ${wins.length?`
-    <div class="ov-section">
-      <div class="ov-sec-head ov-sec-good">
-        <span class="ov-sec-icon">✓</span>
-        <span class="ov-sec-title">Improved</span>
-        <span class="ov-sec-sub">${wins.length} metric${wins.length>1?"s":""} back in normal range</span>
-      </div>
-      <div class="ov-sec-body">${wins.map(metricCard).join("")}</div>
-    </div>`:""}
-    ${!actNow.length&&!watch.length?`
-    <div class="ov-section">
-      <div class="ov-sec-head ov-sec-good">
-        <span class="ov-sec-icon">✓</span>
-        <span class="ov-sec-title">All Clear</span>
-        <span class="ov-sec-sub">All tracked metrics within normal range</span>
-      </div>
-    </div>`:""}`;
+
+    <!-- MINI TREND ROW for key metrics -->
+    <div class="section-head"><span>Key Trends</span></div>
+    <div class="mini-chart-grid">
+      ${["ldl","hdl","triglycerides","uric_acid","sgot","sgpt","vitamin_d","vitamin_b12","tsh","prolactin","fasting_glucose","eosinophils","body_fat_pct","smm","body_weight"].map(key=>{
+        const pts=reports.map(r=>({date:r.date,val:r.metrics[key]})).filter(p=>p.val!=null);
+        if(!pts.length) return "";
+        const r=RANGES[key], st=getStatus(key,pts[pts.length-1].val);
+        return `<div class="mini-card mc-${st}">
+          <div class="mc-top">
+            <span class="mc-name">${r.label}</span>
+            <span class="mc-now">${pts[pts.length-1].val} <em>${r.unit}</em></span>
+          </div>
+          <canvas id="mc-${key}" class="mc-canvas" width="280" height="72"></canvas>
+          <div class="mc-dates">${pts.map(p=>`<span class="mcd-${getStatus(key,p.val)}">${p.date.slice(5)}</span>`).join("→")}</div>
+        </div>`;
+      }).join("")}
+    </div>
+  `;
 }
 
 // ── GROUP PAGE ─────────────────────────────────────────────────────────
 function renderGroup(group){
-  const keys=Object.keys(RANGES).filter(k=>RANGES[k].group===group);
-  const labReports=reports.filter(r=>!r.type||r.type==="lab");
+  const keys = Object.keys(RANGES).filter(k=>RANGES[k].group===group);
+  const latest=reports[reports.length-1]?.metrics||{};
+  const prev  =reports[reports.length-2]?.metrics||{};
+
   return `
     <div class="page-header">
-      <h1 class="page-title">${group}</h1>
-      <div class="page-sub"><span class="report-lab">${keys.length} parameters</span></div>
+      <div>
+        <h1 class="page-title">${group}</h1>
+        <div class="page-sub">${keys.length} parameters tracked</div>
+      </div>
     </div>
     <div class="detail-grid">
       ${keys.map(key=>{
         const r=RANGES[key];
-        const pts=labReports.map(rep=>({date:rep.date,label:rep.label,val:rep.metrics?.[key]})).filter(p=>p.val!=null);
+        const pts=reports.map(rep=>({date:rep.date,label:rep.label,val:rep.metrics[key]})).filter(p=>p.val!=null);
         if(!pts.length) return "";
-        const cur=pts[pts.length-1],prv=pts[pts.length-2];
+        const cur=pts[pts.length-1], prv=pts[pts.length-2];
         const st=getStatus(key,cur.val);
         const delta=prv?(cur.val-prv.val):null;
         const sign=delta===null?"":delta>0?"↑":"↓";
@@ -402,101 +399,37 @@ function renderGroup(group){
           <div class="dc-header">
             <div>
               <div class="dc-name">${r.label}</div>
-              <div class="dc-ref">Ref: ${r.min}–${r.max} ${r.unit}</div>
+              <div class="dc-ref">ref ${r.min}–${r.max} ${r.unit}</div>
             </div>
             <div class="dc-right">
-              <div class="dc-val dc-val-${st}">${cur.val}</div>
+              <div class="dc-val">${cur.val}</div>
               <div class="dc-unit">${r.unit}</div>
               ${delta!==null?`<div class="dc-delta ${dClass}">${sign}${Math.abs(delta).toFixed(1)}</div>`:""}
             </div>
           </div>
-          ${rangeBar(key,cur.val)}
-          <canvas id="dc-${key}" class="dc-canvas" width="320" height="80"></canvas>
+          <canvas id="dc-${key}" class="dc-canvas" width="320" height="90"></canvas>
           <div class="dc-history">
-            ${pts.map(p=>`<span class="dh-pt dh-${getStatus(key,p.val)}">${p.date}: ${p.val}</span>`).join("")}
+            ${pts.map(p=>`<span class="dh-pt dh-${getStatus(key,p.val)}" title="${p.label}">${p.date.slice(2)}: ${p.val}</span>`).join("")}
           </div>
         </div>`;
       }).join("")}
-    </div>`;
-}
-
-// ── IMAGING PAGE ───────────────────────────────────────────────────────
-const MODALITY_ICON = {
-  "X-Ray":"🩻", "Ultrasound":"〰", "MRI":"🧲", "CT Scan":"⊙",
-  "Echocardiography":"♥", "ECG":"〜", "Other":"⬜"
-};
-
-function renderImaging(){
-  const imgReports=reports.filter(r=>r.type==="imaging").sort((a,b)=>b.date.localeCompare(a.date));
-  if(!imgReports.length) return `
-    <div class="page-header">
-      <h1 class="page-title">Imaging</h1>
-      <div class="page-sub"><span class="report-lab">No imaging reports yet</span></div>
     </div>
-    <div class="empty-card">
-      <p>Upload your X-ray, ultrasound, MRI or CT reports via <strong>+ Add Report</strong>.<br>
-      Findings and impressions will be extracted and stored here.</p>
-    </div>`;
-
-  return `
-    <div class="page-header">
-      <h1 class="page-title">Imaging</h1>
-      <div class="page-sub"><span class="report-lab">${imgReports.length} report${imgReports.length!==1?"s":""}</span></div>
-    </div>
-    <div class="img-list">
-      ${imgReports.map(rep=>(rep.imaging||[]).map(scan=>`
-        <div class="img-card">
-          <div class="img-card-head">
-            <div class="img-card-icon">${MODALITY_ICON[scan.modality]||"⬜"}</div>
-            <div>
-              <div class="img-card-title">${scan.modality}${scan.region?` — ${scan.region}`:""}</div>
-              <div class="img-card-meta">${rep.date} · ${rep.label}</div>
-            </div>
-            <button class="btn-del-hist" onclick="window.__del('${rep.id}')">Delete</button>
-          </div>
-          ${scan.findings?`
-          <div class="img-section">
-            <div class="img-sec-label">Findings</div>
-            <div class="img-sec-body">${scan.findings.replace(/\n/g,"<br>")}</div>
-          </div>`:""}
-          ${scan.impression?`
-          <div class="img-section img-section-imp">
-            <div class="img-sec-label">Impression / Conclusion</div>
-            <div class="img-sec-body img-impression">${scan.impression.replace(/\n/g,"<br>")}</div>
-          </div>`:""}
-        </div>`).join("")).join("")}
-    </div>`;
+  `;
 }
 
 // ── HISTORY PAGE ───────────────────────────────────────────────────────
 function renderHistory(){
-  const allSorted=[...reports].sort((a,b)=>b.date.localeCompare(a.date));
   return `
     <div class="page-header">
-      <h1 class="page-title">History</h1>
-      <div class="page-sub"><span class="report-lab">${reports.length} total records</span></div>
+      <div>
+        <h1 class="page-title">Report History</h1>
+        <div class="page-sub">${reports.length} reports on record</div>
+      </div>
     </div>
     <div class="hist-list">
-      ${allSorted.map(rep=>{
-        if(rep.type==="imaging"){
-          const scans=rep.imaging||[];
-          return `<div class="hist-card hist-card-img">
-            <div class="hist-top">
-              <div>
-                <div class="hist-date">${rep.date}</div>
-                <div class="hist-lab">${rep.label}</div>
-              </div>
-              <div class="hist-counts">
-                <span class="hc-img">Imaging · ${scans.length} scan${scans.length!==1?"s":""}</span>
-                <button class="btn-del-hist" onclick="window.__del('${rep.id}')">Delete</button>
-              </div>
-            </div>
-            <div class="hist-img-scans">
-              ${scans.map(s=>`<span class="img-scan-chip">${MODALITY_ICON[s.modality]||"⬜"} ${s.modality}${s.region?" · "+s.region:""}</span>`).join("")}
-            </div>
-          </div>`;
-        }
-        const flags=Object.entries(rep.metrics||{}).filter(([k,v])=>getStatus(k,v)!=="normal"&&getStatus(k,v)!=="unknown");
+      ${[...reports].reverse().map(rep=>{
+        const flags=Object.entries(rep.metrics)
+          .filter(([k,v])=>getStatus(k,v)!=="normal"&&getStatus(k,v)!=="unknown");
         const dangerCount=flags.filter(([k,v])=>getStatus(k,v)==="danger").length;
         const warnCount  =flags.filter(([k,v])=>getStatus(k,v)==="warn").length;
         return `<div class="hist-card">
@@ -506,821 +439,495 @@ function renderHistory(){
               <div class="hist-lab">${rep.label}</div>
             </div>
             <div class="hist-counts">
-              <span class="hc-total">${Object.keys(rep.metrics||{}).length} metrics</span>
+              <span class="hc-total">${Object.keys(rep.metrics).length} metrics</span>
               ${dangerCount?`<span class="hc-d">${dangerCount} critical</span>`:""}
               ${warnCount  ?`<span class="hc-w">${warnCount} watch</span>`:""}
               ${!dangerCount&&!warnCount?`<span class="hc-ok">All clear</span>`:""}
-              <button class="btn-del-hist" onclick="window.__del('${rep.id}')">Delete</button>
+              <button class="btn-del-hist" onclick="window.__del('${rep.id}')">✕</button>
             </div>
           </div>
           <div class="hist-metrics">
-            ${Object.entries(rep.metrics||{}).slice(0,18).map(([k,v])=>{
+            ${Object.entries(rep.metrics).slice(0,20).map(([k,v])=>{
               const st=getStatus(k,v);
-              return `<span class="hm-chip hm-${st}">${RANGES[k]?.label||k}: ${v}</span>`;
+              return `<span class="hm-chip hm-${st}" title="${RANGES[k]?.label||k}">${RANGES[k]?.label||k}: ${v}</span>`;
             }).join("")}
-            ${Object.keys(rep.metrics||{}).length>18?`<span class="hm-chip hm-more">+${Object.keys(rep.metrics).length-18} more</span>`:""}
+            ${Object.keys(rep.metrics).length>20?`<span class="hm-chip hm-more">+${Object.keys(rep.metrics).length-20} more</span>`:""}
           </div>
         </div>`;
       }).join("")}
-    </div>`;
+    </div>
+  `;
 }
 
 // ── CHART DRAWING ──────────────────────────────────────────────────────
 function drawAllCharts(){
+  // Mini overview charts
+  ["ldl","hdl","triglycerides","uric_acid","sgot","sgpt","vitamin_d","vitamin_b12","tsh","prolactin","fasting_glucose","eosinophils","body_fat_pct","smm","body_weight"].forEach(k=>{
+    const c=document.getElementById(`mc-${k}`);
+    if(c) drawChart(c, k, 280, 72, true);
+  });
+  // Detail cards
   Object.keys(RANGES).forEach(k=>{
     const c=document.getElementById(`dc-${k}`);
-    if(c) drawChart(c,k,320,80);
-  });
-}
-function drawChart(canvas,key,W,H){
-  const r=RANGES[key];
-  const labReports=reports.filter(rep=>!rep.type||rep.type==="lab");
-  const pts=labReports.map(rep=>rep.metrics?.[key]).filter(v=>v!=null);
-  if(!pts.length) return;
-  const ctx=canvas.getContext("2d");
-  ctx.clearRect(0,0,W,H);
-  const pad={l:32,r:12,t:8,b:22};
-  const IW=W-pad.l-pad.r, IH=H-pad.t-pad.b;
-  // Scale Y-axis to latest value + reference range — don't let old outliers stretch the chart
-  const latestVal=pts[pts.length-1];
-  const scaleV=[latestVal, r.min, r.max];
-  const lo=Math.max(0, Math.min(...scaleV)*0.82);
-  const hi=Math.max(...scaleV)*1.18;
-  const toY=v=>pad.t+IH-(((v-lo)/(hi-lo))*IH);
-  const toX=i=>pts.length<2?pad.l+IW/2:pad.l+(i/(pts.length-1))*IW;
-  ctx.fillStyle="rgba(34,197,94,0.08)";
-  ctx.fillRect(pad.l,toY(r.max),IW,toY(r.min)-toY(r.max));
-  ctx.save(); ctx.setLineDash([3,3]); ctx.lineWidth=1;
-  [r.min,r.max].forEach(v=>{ ctx.strokeStyle="rgba(34,197,94,0.4)"; ctx.beginPath(); ctx.moveTo(pad.l,toY(v)); ctx.lineTo(pad.l+IW,toY(v)); ctx.stroke(); });
-  ctx.restore();
-  ctx.fillStyle="#94a3b8"; ctx.font="9px Inter,sans-serif"; ctx.textAlign="right";
-  [r.min,r.max].forEach(v=>ctx.fillText(v,pad.l-4,toY(v)+3));
-  ctx.textAlign="center";
-  labReports.filter(rep=>rep.metrics?.[key]!=null).forEach((rep,i)=>{
-    const allPts=labReports.filter(r2=>r2.metrics?.[key]!=null);
-    ctx.fillText(rep.date.slice(5),toX(allPts.indexOf(rep)),H-4);
-  });
-  if(pts.length===1){
-    const st=getStatus(key,pts[0]);
-    ctx.beginPath(); ctx.arc(toX(0),toY(pts[0]),5,0,Math.PI*2);
-    ctx.fillStyle=st==="normal"?"#22c55e":st==="warn"?"#f59e0b":"#ef4444";
-    ctx.fill(); return;
-  }
-  ctx.beginPath();
-  pts.forEach((v,i)=>i===0?ctx.moveTo(toX(i),toY(v)):ctx.lineTo(toX(i),toY(v)));
-  ctx.lineTo(toX(pts.length-1),H-pad.b); ctx.lineTo(toX(0),H-pad.b); ctx.closePath();
-  const g=ctx.createLinearGradient(0,0,0,H);
-  g.addColorStop(0,"rgba(59,130,246,0.12)"); g.addColorStop(1,"rgba(59,130,246,0)");
-  ctx.fillStyle=g; ctx.fill();
-  ctx.beginPath();
-  pts.forEach((v,i)=>i===0?ctx.moveTo(toX(i),toY(v)):ctx.lineTo(toX(i),toY(v)));
-  ctx.strokeStyle="#3b82f6"; ctx.lineWidth=2; ctx.lineJoin="round"; ctx.stroke();
-  pts.forEach((v,i)=>{
-    const st=getStatus(key,v);
-    ctx.beginPath(); ctx.arc(toX(i),toY(v),4,0,Math.PI*2);
-    ctx.fillStyle=st==="normal"?"#22c55e":st==="warn"?"#f59e0b":"#ef4444";
-    ctx.strokeStyle="#fff"; ctx.lineWidth=1.5; ctx.fill(); ctx.stroke();
+    if(c) drawChart(c, k, 320, 90, false);
   });
 }
 
-// ── FLAGS ──────────────────────────────────────────────────────────────
+function drawChart(canvas, key, W, H, mini){
+  const r=RANGES[key];
+  const pts=reports.map(rep=>rep.metrics[key]).filter(v=>v!=null);
+  if(!pts.length) return;
+  const ctx=canvas.getContext("2d");
+  ctx.clearRect(0,0,W,H);
+  const pad={l:mini?4:30, r:mini?4:10, t:mini?4:8, b:mini?4:22};
+  const IW=W-pad.l-pad.r, IH=H-pad.t-pad.b;
+
+  const allV=[...pts,r.min,r.max];
+  const lo=Math.min(...allV)*0.88, hi=Math.max(...allV)*1.1;
+  const toY=v=>pad.t+IH-(((v-lo)/(hi-lo))*IH);
+  const toX=i=>pts.length<2?pad.l+IW/2:pad.l+(i/(pts.length-1))*IW;
+
+  // Normal band
+  const yLo=toY(r.min), yHi=toY(r.max);
+  ctx.fillStyle="rgba(134,239,172,0.07)";
+  ctx.fillRect(pad.l, yHi, IW, yLo-yHi);
+
+  // Ref lines
+  ctx.save(); ctx.setLineDash([3,3]); ctx.lineWidth=1;
+  [r.min,r.max].forEach(v=>{
+    ctx.strokeStyle="rgba(134,239,172,0.35)";
+    ctx.beginPath(); ctx.moveTo(pad.l,toY(v)); ctx.lineTo(pad.l+IW,toY(v)); ctx.stroke();
+  });
+  ctx.restore();
+
+  // Y axis labels (detail only)
+  if(!mini){
+    ctx.fillStyle="rgba(148,163,184,0.6)";
+    ctx.font="9px Geist Mono, monospace";
+    ctx.textAlign="right";
+    [r.min,r.max].forEach(v=>ctx.fillText(v, pad.l-4, toY(v)+3));
+    // X axis dates
+    ctx.textAlign="center";
+    reports.filter(rep=>rep.metrics[key]!=null).forEach((rep,i)=>{
+      const allPts=reports.filter(r2=>r2.metrics[key]!=null);
+      const xi=allPts.indexOf(rep);
+      ctx.fillText(rep.date.slice(5), toX(xi), H-4);
+    });
+  }
+
+  if(pts.length===1){
+    const st=getStatus(key,pts[0]);
+    ctx.beginPath(); ctx.arc(toX(0),toY(pts[0]),5,0,Math.PI*2);
+    ctx.fillStyle=st==="normal"?"#86efac":st==="warn"?"#fcd34d":"#fca5a5";
+    ctx.fill(); return;
+  }
+
+  // Area fill
+  ctx.beginPath();
+  pts.forEach((v,i)=>i===0?ctx.moveTo(toX(i),toY(v)):ctx.lineTo(toX(i),toY(v)));
+  ctx.lineTo(toX(pts.length-1),H); ctx.lineTo(toX(0),H); ctx.closePath();
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,"rgba(96,165,250,0.18)"); g.addColorStop(1,"rgba(96,165,250,0)");
+  ctx.fillStyle=g; ctx.fill();
+
+  // Line
+  ctx.beginPath();
+  pts.forEach((v,i)=>i===0?ctx.moveTo(toX(i),toY(v)):ctx.lineTo(toX(i),toY(v)));
+  ctx.strokeStyle="rgba(96,165,250,0.7)"; ctx.lineWidth=1.5; ctx.lineJoin="round"; ctx.stroke();
+
+  // Dots
+  pts.forEach((v,i)=>{
+    const st=getStatus(key,v);
+    ctx.beginPath(); ctx.arc(toX(i),toY(v),mini?3:4,0,Math.PI*2);
+    ctx.fillStyle=st==="normal"?"#86efac":st==="warn"?"#fcd34d":"#fca5a5";
+    ctx.strokeStyle="rgba(15,23,42,0.8)"; ctx.lineWidth=1.2;
+    ctx.fill(); ctx.stroke();
+  });
+}
+
+// ── INSIGHTS & FLAGS ───────────────────────────────────────────────────
 function computeFlags(){
-  const labReports=reports.filter(r=>!r.type||r.type==="lab");
-  const latest=labReports[labReports.length-1]?.metrics||{};
-  const danger=[],warn=[];
+  const latest=reports[reports.length-1]?.metrics||{};
+  const danger=[], warn=[];
   Object.entries(latest).forEach(([k,v])=>{
     const st=getStatus(k,v); if(!RANGES[k]) return;
     const f={metric:k,label:RANGES[k].label,value:v,unit:RANGES[k].unit,ref:`${RANGES[k].min}–${RANGES[k].max}`,status:st};
-    if(st==="danger") danger.push(f); else if(st==="warn") warn.push(f);
+    if(st==="danger") danger.push(f);
+    else if(st==="warn") warn.push(f);
   });
   return {danger,warn};
 }
 
-// ── PDF PARSING ────────────────────────────────────────────────────────
-const METRIC_PARSE_MAP = {
-  "uric acid":"uric_acid","serum uric acid":"uric_acid",
-  "fasting glucose":"fasting_glucose","fasting blood glucose":"fasting_glucose",
-  "fasting blood sugar":"fasting_glucose","fbs":"fasting_glucose",
-  "hemoglobin":"hemoglobin","haemoglobin":"hemoglobin",
-  "total cholesterol":"total_cholesterol","cholesterol total":"total_cholesterol",
-  "triglycerides":"triglycerides","triglyceride":"triglycerides",
-  "hdl cholesterol":"hdl","hdl-c":"hdl",
-  "ldl cholesterol":"ldl","ldl-c":"ldl","ldl (direct)":"ldl",
-  "vldl cholesterol":"vldl","vldl-c":"vldl",
-  "non hdl cholesterol":"non_hdl","non-hdl":"non_hdl",
-  "tc/hdl ratio":"tc_hdl_ratio","ldl/hdl ratio":"ldl_hdl_ratio",
-  "sgot":"sgot","ast":"sgot","aspartate aminotransferase":"sgot",
-  "sgpt":"sgpt","alt":"sgpt","alanine aminotransferase":"sgpt",
-  "alkaline phosphatase":"alp",
-  "ggt":"ggt","gamma gt":"ggt","gamma glutamyl transferase":"ggt",
-  "bilirubin, total":"bilirubin_total","bilirubin total":"bilirubin_total","total bilirubin":"bilirubin_total",
-  "bilirubin, direct":"bilirubin_direct","direct bilirubin":"bilirubin_direct",
-  "bilirubin, indirect":"bilirubin_indirect","indirect bilirubin":"bilirubin_indirect",
-  "total protein":"total_protein","protein, total":"total_protein",
-  "albumin":"albumin","globulin":"globulin","a/g ratio":"ag_ratio",
-  "creatinine":"creatinine","serum creatinine":"creatinine",
-  "blood urea nitrogen":"bun","bun":"bun",
-  "urea":"urea","serum urea":"urea","blood urea":"urea",
-  "sodium":"sodium","potassium":"potassium","chloride":"chloride",
-  "25-oh vitamin d":"vitamin_d","25 oh vitamin d":"vitamin_d","vitamin d":"vitamin_d",
-  "vitamin b12":"vitamin_b12","vit b12":"vitamin_b12","cyanocobalamin":"vitamin_b12",
-  "calcium":"calcium",
-  "tsh":"tsh","thyroid stimulating hormone":"tsh",
-  "hba1c":"hba1c","glycated hemoglobin":"hba1c","haemoglobin a1c":"hba1c",
-  "wbc":"wbc","total leucocyte count":"wbc","total wbc count":"wbc","tlc":"wbc",
-  "neutrophils":"neutrophils","lymphocytes":"lymphocytes",
-  "monocytes":"monocytes","eosinophils":"eosinophils","basophils":"basophils",
-  "platelet count":"platelets","platelets":"platelets",
-  "mean platelet volume":"mpv","mpv":"mpv",
-  "platelet distribution width":"pdw","pdw":"pdw",
-  "esr":"esr","erythrocyte sedimentation rate":"esr",
-  "serum iron":"iron_serum","iron, serum":"iron_serum",
-  "tibc":"tibc","total iron binding capacity":"tibc","uibc":"uibc",
-  "transferrin saturation":"transferrin_sat",
-  "prolactin":"prolactin",
-  "testosterone, total":"testosterone","total testosterone":"testosterone","testosterone":"testosterone",
-  "cortisol":"cortisol","serum cortisol":"cortisol",
-  "prostate specific antigen":"psa","psa":"psa",
-  "follicle stimulating hormone":"fsh","fsh":"fsh",
-  "luteinizing hormone":"lh","lh":"lh",
-};
-
-const IMAGING_KEYWORDS = /\b(x[\s\-]?ray|xray|radiograph|ultrasound|usg|sonograph|mri|magnetic resonance|ct[\s\-]scan|computed tomography|echocardiograph|echo\b|ecg|electrocardiograph|mammograph|dexa|bone density|pet scan|nuclear medicine|doppler)\b/i;
-const IMAGING_SECTIONS  = /\b(findings|impression|conclusion|clinical indication|technique|protocol|procedure)\s*[:\-]/i;
-
-function isImagingReport(text, metricsCount) {
-  if(!text) return false;
-  return IMAGING_KEYWORDS.test(text) || (IMAGING_SECTIONS.test(text) && metricsCount < 5);
-}
-
-function extractImagingData(text) {
-  const lower = text.toLowerCase();
-  // Modality
-  let modality = "Other";
-  if(/\bx[\s\-]?ray\b|radiograph/i.test(text))          modality="X-Ray";
-  else if(/ultrasound|usg|sonograph|doppler/i.test(text)) modality="Ultrasound";
-  else if(/\bmri\b|magnetic resonance/i.test(text))       modality="MRI";
-  else if(/ct[\s\-]scan|computed tomography/i.test(text)) modality="CT Scan";
-  else if(/echocardiograph|echo\b/i.test(text))           modality="Echocardiography";
-  else if(/\becg\b|electrocardiograph/i.test(text))       modality="ECG";
-
-  // Body region — look for common terms anywhere in text
-  let region = "";
-  const regionMatch = text.match(/\b(chest|abdomen|pelvis|abdomen.*pelvis|spine|lumbar|cervical|thoracic|knee|hip|shoulder|wrist|ankle|foot|hand|neck|brain|liver|kidney|thyroid|gallbladder|prostate|breast|pelvis|uterus|ovary|scrotal|cardiac|heart|aorta|carotid)\b/i);
-  if(regionMatch) region = regionMatch[1].charAt(0).toUpperCase()+regionMatch[1].slice(1).toLowerCase();
-
-  // Findings
-  const findMatch = text.match(/\bfindings?\s*[:\-]\s*([\s\S]*?)(?=\n\s*(?:impression|conclusion|opinion|recommendation|note\b)|$)/i);
-  const findings  = findMatch ? findMatch[1].trim().slice(0,3000) : "";
-
-  // Impression
-  const impMatch   = text.match(/\b(?:impression|conclusion|opinion)\s*[:\-]\s*([\s\S]*?)(?=\n\s*[A-Z]{3,}[\s:]|$)/i);
-  const impression = impMatch ? impMatch[1].trim().slice(0,1000) : "";
-
-  // If neither found, store the first 2000 chars as findings
-  const fallback = (!findings && !impression) ? text.trim().slice(0,2000) : "";
-
-  return { modality, region, findings: findings||fallback, impression };
-}
-
-function extractDateFromText(text) {
-  const labeled = text.match(/(?:collection\s*date|report\s*date|sample\s*date|date\s*of\s*(?:collection|report|sample))[\s:–\-]+(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](20\d{2})/i);
-  if(labeled){ const[,d,m,y]=labeled; return `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`; }
-  const bare = text.slice(0,800).match(/(\d{1,2})[\/\-](0[1-9]|1[0-2]|\d)[\/\-](20\d{2})/);
-  if(bare){ const[,d,m,y]=bare; if(parseInt(d)<=31&&parseInt(m)<=12) return `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`; }
-  const textDate = text.match(/(\d{1,2})\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+(20\d{2})/i);
-  if(textDate){ const months={january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12}; const[,d,mon,y]=textDate; return `${y}-${String(months[mon.toLowerCase()]).padStart(2,'0')}-${d.padStart(2,'0')}`; }
-  return null;
-}
-
-function extractMetrics(text) {
-  const lower=text.toLowerCase().replace(/\n/g," ");
-  const metrics={};
-  const entries=Object.entries(METRIC_PARSE_MAP).sort((a,b)=>b[0].length-a[0].length);
-  for(const[label,key] of entries){
-    if(metrics[key]) continue;
-    const idx=lower.indexOf(label); if(idx===-1) continue;
-    const slice=text.slice(idx+label.length,idx+label.length+160);
-    const match=slice.match(/[^a-zA-Z%](\d{1,6}(?:\.\d{1,3})?)/);
-    if(match){ const val=parseFloat(match[1]); if(!isNaN(val)&&val>0&&val<100000) metrics[key]=val; }
-  }
-  return metrics;
-}
-
-async function parsePDFFile(file) {
-  try {
-    // PDF.js loaded as UMD sets window.pdfjsLib
-    const lib = window.pdfjsLib || window["pdfjs-dist/build/pdf"];
-    if(!lib){ console.warn("PDF.js not loaded"); return {metrics:{},date:null,text:"",isImaging:false}; }
-    lib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-    const buf=await file.arrayBuffer();
-    const pdf=await lib.getDocument({data:buf}).promise;
-    let text="";
-    for(let i=1;i<=pdf.numPages;i++){
-      const page=await pdf.getPage(i);
-      const content=await page.getTextContent();
-      text+=content.items.map(item=>item.str+" ").join("")+"\n";
+function computeInsights(){
+  if(reports.length<2) return [{type:"info",icon:"·",text:"Add more reports to see trend insights."}];
+  const cur=reports[reports.length-1].metrics, prv=reports[reports.length-2].metrics;
+  const ins=[];
+  const chk=(k,good,bad)=>{
+    const c=cur[k],p=prv[k]; if(c==null) return;
+    const cs=getStatus(k,c), ps=getStatus(k,p??c);
+    if(ps!=="normal"&&cs==="normal") ins.push({type:"good",icon:"↗",text:good});
+    else if(ps==="normal"&&cs!=="normal") ins.push({type:"bad",icon:"↘",text:bad});
+    else if(cs!=="normal"){
+      const worse=(k==="hdl")?(c<p):(c>p);
+      if(p!=null&&worse) ins.push({type:"bad",icon:"↑",text:`${RANGES[k].label} worsening: ${p}→${c} ${RANGES[k].unit}`});
+      else if(p!=null) ins.push({type:"warn",icon:"→",text:`${RANGES[k].label} still out of range: ${c} ${RANGES[k].unit}`});
     }
-    const metrics=extractMetrics(text);
-    const date=extractDateFromText(text);
-    const isImg=isImagingReport(text,Object.keys(metrics).length);
-    return {metrics,date,text,isImaging:isImg};
-  } catch(e){
-    console.error("PDF parse error:",e);
-    return {metrics:{},date:null,text:"",isImaging:false};
-  }
+  };
+  chk("sgot","Liver SGOT normalised","SGOT elevated — monitor liver");
+  chk("sgpt","Liver SGPT normalised","SGPT elevated — monitor liver");
+  chk("vitamin_d","Vitamin D now sufficient","Vitamin D dropped — supplement needed");
+  chk("vitamin_b12","B12 back in range","B12 dropped below range");
+  chk("uric_acid","Uric acid normalised","Uric acid elevated — dietary change needed");
+  chk("ldl","LDL now optimal","LDL above optimal");
+  chk("hdl","HDL improved into range","HDL below target");
+  chk("triglycerides","Triglycerides normalised","Triglycerides borderline high");
+  chk("prolactin","Prolactin normalised","Prolactin elevated — repeat fasting test");
+  chk("eosinophils","Eosinophils normalised","Eosinophils elevated — check allergy/parasite");
+  chk("non_hdl","Non-HDL improved","Non-HDL rising — cardiovascular risk");
+  if(!ins.length) ins.push({type:"good",icon:"✓",text:"All tracked metrics are within normal range."});
+  return ins;
 }
 
-// ── MODAL STATE ────────────────────────────────────────────────────────
-let uploadedFiles=[], mergedMetrics={}, detectedDate=null;
-let imagingFiles=[];   // files detected as imaging
-let pendingReports=[]; // collected during review steps, saved all at once at the end
-
-window.openModal=()=>{
-  uploadedFiles=[]; mergedMetrics={}; detectedDate=null; imagingFiles=[]; pendingReports=[];
+// ── ADD REPORT MODAL ───────────────────────────────────────────────────
+window.openModal = ()=>{
+  const groups=[...new Set(Object.values(RANGES).map(r=>r.group))];
   document.getElementById("modal").style.display="flex";
-  renderModalUpload();
-};
-
-// Save a single report to DB without closing the modal
-async function saveReportInternal(rep) {
-  await saveReport(currentUser.uid, rep);
-  const i=reports.findIndex(r=>r.id===rep.id);
-  if(i>=0) reports[i]=rep; else reports.push(rep);
-  reports.sort((a,b)=>a.date.localeCompare(b.date));
-}
-
-// Called once at the very end — save everything, then close
-async function saveAllAndClose() {
-  if(!pendingReports.length){ closeModal(); return; }
-  const foot=document.querySelector(".m-foot");
-  const setSaving=()=>{ if(foot) foot.innerHTML=`<span style="color:var(--text3);font-size:0.82rem">Saving ${pendingReports.length} report${pendingReports.length>1?"s":""}…</span>`; };
-  setSaving();
-  try {
-    for(const rep of pendingReports) await saveReportInternal(rep);
-    await writeSnapshot(reports);
-    pendingReports=[];
-    closeModal();
-    renderSidebar(); // ← update report count in sidebar
-    renderMain();
-  } catch(err) {
-    console.error("Save failed:", err);
-    if(foot) foot.innerHTML=`
-      <span style="color:var(--danger);font-size:0.8rem">Save failed: ${err.message}</span>
-      <button class="m-save" onclick="saveAllAndClose()">Retry</button>`;
-  }
-}
-window.closeModal=()=>document.getElementById("modal").style.display="none";
-
-function renderModalUpload(){
   document.getElementById("modal-inner").innerHTML=`
     <div class="m-head">
       <h2>Add Report</h2>
       <button class="m-close" onclick="closeModal()">✕</button>
     </div>
-    <div class="m-upload-body">
-      <div class="m-meta-row">
-        <label class="m-meta-label">Report Date
-          <input type="date" id="nd" value="${new Date().toISOString().slice(0,10)}"/>
-          <span class="m-meta-hint">Auto-filled from PDF if found</span>
-        </label>
-        <label class="m-meta-label">Lab / Source
-          <input type="text" id="nl" placeholder="e.g. Tata 1mg, Apollo"/>
-        </label>
-      </div>
-
-      <!-- Entire zone is clickable — triggers hidden input -->
-      <div class="upload-zone" id="upload-zone"
-        onclick="document.getElementById('_file_input').click()"
-        ondragover="event.preventDefault();event.stopPropagation();this.classList.add('dz-over')"
-        ondragleave="event.stopPropagation();this.classList.remove('dz-over')"
-        ondrop="event.stopPropagation();handleDrop(event)">
-        <div class="dz-icon">↑</div>
-        <div class="dz-text">Click here or drop PDF files</div>
-        <div class="dz-sub">Lab reports, X-rays, ultrasounds, MRIs — all supported</div>
-        <div class="dz-hint">Multiple files OK · Values auto-extracted</div>
-      </div>
-      <!-- Hidden input lives outside the zone to avoid click-loop -->
-      <input type="file" id="_file_input" accept=".pdf" multiple style="display:none"
-        onchange="handleFileInput(this)"/>
-
-      <div id="file-list"></div>
-      <div id="upload-actions" style="display:none" class="upload-actions">
-        <label class="add-more-btn" onclick="event.stopPropagation()">
-          + Add another file
-          <input type="file" accept=".pdf" multiple style="display:none" onchange="handleFileInput(this)"/>
-        </label>
-        <button class="review-btn" onclick="goToReview()">Review & Save →</button>
-      </div>
-      <div class="m-divider"><span>or</span></div>
-      <button class="m-manual-btn" onclick="renderModalLabReview()">Enter lab values manually</button>
-    </div>`;
-}
-
-window.handleDrop=async(e)=>{
-  e.preventDefault();
-  document.getElementById("upload-zone").classList.remove("dz-over");
-  await processFiles(Array.from(e.dataTransfer.files).filter(f=>f.type==="application/pdf"||f.name.endsWith(".pdf")));
-};
-window.handleFileInput=async(input)=>{
-  if(!input.files.length) return;
-  await processFiles(Array.from(input.files));
-  input.value=""; // reset so same file can be re-added
-};
-
-async function processFiles(files){
-  if(!files.length) return;
-  for(const file of files){
-    const safeId=`fi_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    const li=document.createElement("div");
-    li.className="file-item fi-loading"; li.id=safeId;
-    li.innerHTML=`<span class="fi-spinner"></span><span class="fi-name">${file.name}</span><span class="fi-status">Reading PDF…</span>`;
-    document.getElementById("file-list").appendChild(li);
-
-    const {metrics,date,text,isImaging}=await parsePDFFile(file);
-    const count=Object.keys(metrics).length;
-
-    if(date&&!detectedDate){
-      detectedDate=date;
-      const nd=document.getElementById("nd");
-      if(nd) nd.value=date;
-    }
-
-    if(isImaging){
-      const imgData=extractImagingData(text);
-      imagingFiles.push({name:file.name,rawText:text,imgData,date});
-      li.className="file-item fi-img";
-      li.innerHTML=`
-        <span class="fi-icon-img">${MODALITY_ICON[imgData.modality]||"⬜"}</span>
-        <div class="fi-info">
-          <span class="fi-name">${file.name}</span>
-          <span class="fi-tag">Imaging · ${imgData.modality}${imgData.region?" · "+imgData.region:""}</span>
-        </div>
-        <button class="fi-remove" onclick="removeUploadedFile('${safeId}','imaging')">×</button>`;
-    } else {
-      Object.assign(mergedMetrics,metrics);
-      uploadedFiles.push({id:safeId,name:file.name,metrics,count});
-      li.className=`file-item ${count>0?"fi-ok":"fi-warn"}`;
-      li.innerHTML=`
-        <span class="fi-icon">${count>0?"✓":"!"}</span>
-        <div class="fi-info">
-          <span class="fi-name">${file.name}</span>
-          <span class="fi-tag">${count>0?count+" values found":"No values parsed — check manually"}</span>
-        </div>
-        <button class="fi-remove" onclick="removeUploadedFile('${safeId}','lab')">×</button>`;
-    }
-    document.getElementById("upload-actions").style.display="flex";
-  }
-}
-
-window.removeUploadedFile=(safeId,type)=>{
-  if(type==="lab"){
-    uploadedFiles=uploadedFiles.filter(f=>f.id!==safeId);
-    mergedMetrics={}; uploadedFiles.forEach(f=>Object.assign(mergedMetrics,f.metrics));
-  } else {
-    imagingFiles.shift(); // simplified — remove first imaging
-  }
-  document.getElementById(safeId)?.remove();
-  if(!uploadedFiles.length&&!imagingFiles.length)
-    document.getElementById("upload-actions").style.display="none";
-};
-
-window.goToReview=()=>{
-  // If we have imaging files, go to imaging review first, then lab
-  if(imagingFiles.length) renderModalImagingReview(0);
-  else renderModalLabReview();
-};
-
-// ── IMAGING REVIEW MODAL ───────────────────────────────────────────────
-function renderModalImagingReview(idx){
-  const f=imagingFiles[idx];
-  const d=f.imgData;
-  const date=document.getElementById("nd")?.value||detectedDate||new Date().toISOString().slice(0,10);
-  const label=document.getElementById("nl")?.value||"";
-  document.getElementById("modal-inner").innerHTML=`
-    <div class="m-head">
-      <h2>Imaging Report ${imagingFiles.length>1?`(${idx+1}/${imagingFiles.length})`:" "}</h2>
-      <button class="m-close" onclick="closeModal()">✕</button>
-    </div>
-    <div class="m-notice m-notice-info">
-      Detected as <strong>${d.modality}</strong> report — review and edit the extracted text below before saving.
-    </div>
-    <div class="img-review-body">
-      <div class="m-meta-row m-meta-top">
-        <label class="m-meta-label">Report Date
-          <input type="date" id="nd" value="${date}"/>
-        </label>
-        <label class="m-meta-label">Lab / Source
-          <input type="text" id="nl" value="${label}" placeholder="e.g. Apollo Diagnostics"/>
-        </label>
-      </div>
-      <div class="img-review-fields">
-        <label class="m-meta-label" style="flex:1;min-width:120px">Modality
-          <select id="img-modality" class="img-select">
-            ${["X-Ray","Ultrasound","MRI","CT Scan","Echocardiography","ECG","Other"].map(m=>`<option ${m===d.modality?"selected":""}>${m}</option>`).join("")}
-          </select>
-        </label>
-        <label class="m-meta-label" style="flex:2">Body Region
-          <input type="text" id="img-region" value="${d.region}" placeholder="e.g. Chest, Abdomen, Knee"/>
-        </label>
-      </div>
-      <label class="img-textarea-label">Findings
-        <textarea id="img-findings" class="img-textarea" rows="7" placeholder="Clinical findings from the report…">${d.findings}</textarea>
-      </label>
-      <label class="img-textarea-label">Impression / Conclusion
-        <textarea id="img-impression" class="img-textarea" rows="4" placeholder="Radiologist's impression…">${d.impression}</textarea>
-      </label>
-      ${f.rawText?`
-      <details class="raw-text-details">
-        <summary>View raw extracted text</summary>
-        <pre class="raw-text-pre">${f.rawText.slice(0,3000).replace(/</g,"&lt;")}</pre>
-      </details>`:""}
-    </div>
-    <div class="m-foot">
-      <button class="m-back" onclick="renderModalUpload()">← Back</button>
-      <button class="m-save" onclick="submitImagingReport(${idx})">
-        ${idx<imagingFiles.length-1 ? `Next: Imaging ${idx+2}/${imagingFiles.length} →`
-          : (uploadedFiles.length>0||Object.keys(mergedMetrics).length>0) ? "Next: Lab Values →"
-          : "Save All"}
-      </button>
-    </div>`;
-}
-
-window.submitImagingReport=(idx)=>{
-  const date=document.getElementById("nd").value;
-  const label=document.getElementById("nl").value||"Unknown";
-  const modality=document.getElementById("img-modality").value;
-  const region=document.getElementById("img-region").value.trim();
-  const findings=document.getElementById("img-findings").value.trim();
-  const impression=document.getElementById("img-impression").value.trim();
-  if(!date){alert("Select a date");return;}
-  // Collect — don't save yet
-  pendingReports.push({
-    id:`${date}-img-${idx}-${Date.now()}`,
-    date,label,
-    type:"imaging",
-    imaging:[{modality,region,findings,impression}],
-    metrics:{}
-  });
-  // Decide next step
-  if(idx<imagingFiles.length-1){
-    renderModalImagingReview(idx+1); // more imaging files to review
-  } else if(uploadedFiles.length>0||Object.keys(mergedMetrics).length>0){
-    renderModalLabReview();          // lab files still to review
-  } else {
-    saveAllAndClose();               // nothing left — save everything now
-  }
-};
-
-// ── LAB REVIEW MODAL ──────────────────────────────────────────────────
-function renderModalLabReview(){
-  const groups=[...new Set(Object.values(RANGES).map(r=>r.group))];
-  const date=document.getElementById("nd")?.value||new Date().toISOString().slice(0,10);
-  const label=document.getElementById("nl")?.value||"";
-  const parsedCount=Object.keys(mergedMetrics).length;
-  document.getElementById("modal-inner").innerHTML=`
-    <div class="m-head">
-      <h2>Lab Values</h2>
-      <button class="m-close" onclick="closeModal()">✕</button>
-    </div>
-    ${parsedCount>0?`<div class="m-notice m-notice-ok">✓ ${parsedCount} values auto-filled from ${uploadedFiles.length} file${uploadedFiles.length!==1?"s":""}. Highlighted fields were parsed — correct anything before saving.</div>`
-    :`<div class="m-notice m-notice-info">No values auto-parsed — enter manually below.</div>`}
-    <div class="m-meta-row m-meta-top">
-      <label class="m-meta-label">Report Date
-        <input type="date" id="nd" value="${date}"/>
-        ${detectedDate?`<span class="m-meta-hint">Auto-detected from PDF</span>`:""}
-      </label>
-      <label class="m-meta-label">Lab / Source
-        <input type="text" id="nl" value="${label}" placeholder="e.g. Tata 1mg"/>
-      </label>
+    <div class="m-meta">
+      <label>Date<input type="date" id="nd" value="${new Date().toISOString().slice(0,10)}"/></label>
+      <label>Lab / Source<input type="text" id="nl" placeholder="e.g. Apollo Hospital"/></label>
     </div>
     <div class="m-groups">
-      ${groups.map(g=>{
-        const keys=Object.keys(RANGES).filter(k=>RANGES[k].group===g);
-        return `<div class="m-group">
+      ${groups.map(g=>`
+        <div class="m-group">
           <div class="m-gtitle">${g}</div>
           <div class="m-fields">
-            ${keys.map(k=>{
-              const r=RANGES[k], val=mergedMetrics[k], st=val!=null?getStatus(k,val):"";
-              return `<label class="m-field ${val!=null?"mf-found":""}">
-                <span class="mf-label">${r.label} <em>${r.unit}</em></span>
-                <input type="number" step="any" id="f-${k}"
-                  placeholder="${r.min}–${r.max}"
-                  ${val!=null?`value="${val}"`:""}
-                  class="${st?"fi-"+st:""}"/>
-              </label>`;
-            }).join("")}
+            ${Object.keys(RANGES).filter(k=>RANGES[k].group===g).map(k=>`
+              <label class="m-field">
+                <span>${RANGES[k].label}<em>${RANGES[k].unit}</em></span>
+                <input type="number" step="any" id="f-${k}" placeholder="${RANGES[k].min}–${RANGES[k].max}"/>
+              </label>`).join("")}
           </div>
-        </div>`;
-      }).join("")}
+        </div>`).join("")}
     </div>
     <div class="m-foot">
-      <button class="m-back" onclick="renderModalUpload()">← Back</button>
-      <button class="m-save" onclick="submitLabReport()">Save Report</button>
-    </div>`;
-}
-
-window.submitLabReport=async()=>{
+      <button class="m-cancel" onclick="closeModal()">Cancel</button>
+      <button class="m-save" onclick="submitReport()">Save Report</button>
+    </div>
+  `;
+};
+window.closeModal = ()=>document.getElementById("modal").style.display="none";
+window.submitReport = async()=>{
   const date=document.getElementById("nd").value;
   const label=document.getElementById("nl").value||"Unknown Lab";
-  if(!date){alert("Select a date");return;}
+  if(!date){ alert("Select a date"); return; }
   const metrics={};
   Object.keys(RANGES).forEach(k=>{
     const el=document.getElementById(`f-${k}`);
     if(el&&el.value!=="") metrics[k]=parseFloat(el.value);
   });
-  if(!Object.keys(metrics).length){alert("Enter at least one value");return;}
-  // Collect lab report then save everything
-  pendingReports.push({id:date,date,label,metrics});
-  await saveAllAndClose();
+  if(!Object.keys(metrics).length){ alert("Enter at least one value"); return; }
+  await window.__save({id:date,date,label,metrics});
 };
 </script>
 
 <style>
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
-:root{
-  --bg:#f0f4f8;
-  --surface:#ffffff;
-  --surface2:#f8fafc;
-  --border:rgba(15,23,42,0.09);
-  --border2:rgba(15,23,42,0.15);
-  --shadow:0 1px 3px rgba(15,23,42,0.08),0 1px 2px rgba(15,23,42,0.05);
-  --shadow-md:0 4px 16px rgba(15,23,42,0.10),0 2px 4px rgba(15,23,42,0.06);
-  --text:#0f172a;--text2:#475569;--text3:#94a3b8;
-  --accent:#2563eb;--accent-bg:#eff6ff;
-  --danger:#dc2626;--danger-bg:#fff1f2;--danger-b:#fecdd3;--danger-acc:#fee2e2;
-  --warn:#d97706;--warn-bg:#fffbeb;--warn-b:#fde68a;--warn-acc:#fef3c7;
-  --good:#16a34a;--good-bg:#f0fdf4;--good-b:#bbf7d0;--good-acc:#dcfce7;
-  --r:10px;
-  --font:'Inter',-apple-system,sans-serif;
-  --mono:'Geist Mono','Fira Code',monospace;
-  --serif:'Instrument Serif',Georgia,serif;
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:       #080c14;
+  --bg2:      #0d1220;
+  --surface:  #101827;
+  --surface2: #141f30;
+  --border:   rgba(255,255,255,0.06);
+  --border2:  rgba(255,255,255,0.1);
+  --text:     #e2e8f0;
+  --text2:    #94a3b8;
+  --text3:    #475569;
+  --accent:   #3b82f6;
+  --green:    #86efac;
+  --yellow:   #fcd34d;
+  --red:      #fca5a5;
+  --green-d:  #16a34a;
+  --yellow-d: #d97706;
+  --red-d:    #dc2626;
+  --r:        10px;
+  --font:     'Geist Mono', monospace;
+  --serif:    'Instrument Serif', serif;
 }
-html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--font);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;}
-button{font-family:var(--font);cursor:pointer;}
-input,select,textarea{font-family:var(--font);}
+
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; line-height: 1.5; }
+button { font-family: var(--font); cursor: pointer; }
+input  { font-family: var(--font); }
 
 /* ── AUTH ── */
-#auth-screen{display:flex;align-items:center;justify-content:center;min-height:100vh;background:linear-gradient(135deg,#eff6ff 0%,#f0fdf4 100%);}
-.auth-box{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:52px 44px;text-align:center;width:380px;box-shadow:var(--shadow-md);}
-.auth-logo{font-family:var(--serif);font-size:3rem;font-style:italic;color:var(--text);margin-bottom:8px;}
-.auth-logo span{color:var(--accent);}
-.auth-sub{color:var(--text2);font-size:0.82rem;margin-bottom:32px;}
-.btn-g{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:12px 20px;background:var(--text);color:#fff;border:none;border-radius:8px;font-size:0.88rem;font-weight:500;transition:opacity 0.15s;}
-.btn-g:hover{opacity:0.88;}
-.g-ic{width:18px;height:18px;}
+#auth-screen {
+  display: flex; align-items: center; justify-content: center; min-height: 100vh;
+  background: radial-gradient(ellipse 80% 60% at 50% 40%, #0d1f3c 0%, var(--bg) 70%);
+}
+.auth-box {
+  background: var(--surface); border: 1px solid var(--border2);
+  border-radius: 20px; padding: 56px 48px; text-align: center; width: 380px;
+}
+.auth-logo { font-family: var(--serif); font-size: 3.2rem; font-style: italic; color: var(--text); margin-bottom: 6px; }
+.auth-logo span { color: var(--accent); }
+.auth-sub  { color: var(--text2); font-size: 0.8rem; margin-bottom: 32px; letter-spacing: 0.04em; }
+.btn-g {
+  display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%;
+  padding: 13px 20px; background: #fff; color: #111; border: none; border-radius: 10px;
+  font-size: 0.88rem; font-weight: 500; transition: opacity 0.15s;
+}
+.btn-g:hover { opacity: 0.9; }
+.g-ic { width: 18px; height: 18px; }
 
-/* ── APP ── */
-#app{display:none;grid-template-columns:230px 1fr;min-height:100vh;}
+/* ── APP SHELL ── */
+#app {
+  display: none; grid-template-columns: 220px 1fr; min-height: 100vh;
+}
 
 /* ── SIDEBAR ── */
-#sidebar{background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;overflow-y:auto;padding:24px 0;}
-.sb-brand{display:flex;align-items:center;gap:12px;padding:0 20px 20px;border-bottom:1px solid var(--border);margin-bottom:8px;}
-.sb-logo{width:36px;height:36px;border-radius:10px;flex-shrink:0;background:linear-gradient(135deg,var(--accent),#7c3aed);display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-style:italic;font-size:1.1rem;color:#fff;}
-.sb-name{font-size:0.85rem;font-weight:600;color:var(--text);}
-.sb-meta{font-size:0.72rem;color:var(--text3);}
-.sb-status-strip{padding:10px 20px 14px;display:flex;flex-wrap:wrap;gap:6px;border-bottom:1px solid var(--border);margin-bottom:8px;}
-.ss-chip{font-size:0.72rem;font-weight:500;padding:3px 9px;border-radius:20px;}
-.ss-danger{background:var(--danger-acc);color:var(--danger);}
-.ss-warn{background:var(--warn-acc);color:var(--warn);}
-.ss-ok{background:var(--good-acc);color:var(--good);}
-.sb-nav{flex:1;padding:4px 12px;}
-.nav-item{display:flex;align-items:center;gap:8px;width:100%;padding:8px 10px;border-radius:7px;border:none;background:transparent;color:var(--text2);font-size:0.82rem;text-align:left;transition:color 0.12s,background 0.12s;}
-.nav-item:hover{color:var(--text);background:var(--bg);}
-.nav-item.active{color:var(--accent);background:var(--accent-bg);font-weight:500;}
-.nav-label{flex:1;}
-.nav-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
-.nd{background:var(--danger);} .nw{background:var(--warn);}
-.nav-img-badge{font-size:0.65rem;background:var(--accent-bg);color:var(--accent);padding:1px 6px;border-radius:10px;}
-.sb-footer{padding:16px 12px 0;border-top:1px solid var(--border);margin-top:8px;display:flex;flex-direction:column;gap:8px;}
-.btn-add-report{padding:9px 14px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:0.82rem;font-weight:500;transition:background 0.15s;}
-.btn-add-report:hover{background:#1d4ed8;}
-.btn-so{padding:7px 14px;background:transparent;color:var(--text3);border:1px solid var(--border2);border-radius:8px;font-size:0.78rem;}
-.btn-so:hover{color:var(--text);}
+#sidebar {
+  background: var(--bg2); border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh;
+  overflow-y: auto; padding: 24px 0;
+}
+.sb-brand { display: flex; align-items: center; gap: 12px; padding: 0 20px 20px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+.sb-avatar {
+  width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0;
+  background: linear-gradient(135deg, #1d4ed8, #7c3aed);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.75rem; font-weight: 600; letter-spacing: 0.05em;
+}
+.sb-name { font-size: 0.82rem; font-weight: 500; }
+.sb-meta { font-size: 0.7rem; color: var(--text3); margin-top: 1px; }
+.sb-flags-mini { padding: 0 20px 12px; display: flex; flex-direction: column; gap: 3px; }
+.flag-dot { font-size: 0.68rem; }
+.fd { color: var(--red); }
+.fw { color: var(--yellow); }
+.fn { color: var(--green); }
 
-/* ── MAIN ── */
-#main-content{padding:44px 52px 80px;overflow-y:auto;background:var(--bg);max-width:900px;}
-.page-header{margin-bottom:32px;}
-.page-title{font-family:var(--serif);font-size:2.2rem;font-style:italic;font-weight:400;color:var(--text);}
-.page-sub{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px;}
-.report-date-badge{font-family:var(--mono);font-size:0.8rem;font-weight:500;background:var(--text);color:#fff;padding:3px 10px;border-radius:6px;}
-.report-lab{font-size:0.82rem;color:var(--text2);}
-.report-prev{font-size:0.76rem;color:var(--text3);}
-.empty-state{margin-top:20px;color:var(--text3);font-size:0.9rem;}
-.empty-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:32px;color:var(--text2);line-height:1.7;box-shadow:var(--shadow);}
+.sb-nav { flex: 1; padding: 4px 10px; }
+.nav-item {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 8px 10px; border-radius: 8px; border: none; background: transparent;
+  color: var(--text3); font-size: 0.78rem; text-align: left; position: relative;
+  transition: color 0.15s, background 0.15s;
+}
+.nav-item:hover { color: var(--text); background: var(--surface); }
+.nav-item.active { color: var(--text); background: var(--surface2); }
+.nav-item.active::before {
+  content: ""; position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+  width: 2px; height: 16px; background: var(--accent); border-radius: 2px;
+}
+.nav-icon  { font-size: 0.75rem; width: 14px; opacity: 0.6; }
+.nav-label { flex: 1; }
+.nav-badge { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.bd { background: var(--red-d); }
+.bw { background: var(--yellow-d); }
 
-/* ── OVERVIEW SECTIONS ── */
-.ov-section{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);overflow:hidden;margin-bottom:20px;}
-.ov-sec-head{display:flex;align-items:center;gap:10px;padding:16px 24px;border-bottom:1px solid var(--border);}
-.ov-sec-danger{background:var(--danger-bg);}
-.ov-sec-warn{background:var(--warn-bg);}
-.ov-sec-good{background:var(--good-bg);}
-.ov-sec-icon{font-size:0.9rem;}
-.ov-sec-danger .ov-sec-icon{color:var(--danger);}
-.ov-sec-warn   .ov-sec-icon{color:var(--warn);}
-.ov-sec-good   .ov-sec-icon{color:var(--good);}
-.ov-sec-title{font-size:0.95rem;font-weight:600;}
-.ov-sec-danger .ov-sec-title{color:var(--danger);}
-.ov-sec-warn   .ov-sec-title{color:var(--warn);}
-.ov-sec-good   .ov-sec-title{color:var(--good);}
-.ov-sec-sub{font-size:0.78rem;color:var(--text3);}
-.ov-sec-body{padding:0 24px;}
+.sb-footer { padding: 16px 12px 0; border-top: 1px solid var(--border); margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.btn-add-report {
+  padding: 9px 14px; background: var(--accent); color: #fff; border: none; border-radius: 8px;
+  font-size: 0.78rem; font-weight: 500; transition: background 0.15s;
+}
+.btn-add-report:hover { background: #2563eb; }
+.btn-so {
+  padding: 7px 14px; background: transparent; color: var(--text3); border: 1px solid var(--border);
+  border-radius: 8px; font-size: 0.75rem; transition: color 0.15s;
+}
+.btn-so:hover { color: var(--text); }
 
-/* ── METRIC ROW ── */
-.mc-row{padding:18px 0;border-bottom:1px solid var(--border);}
-.mc-row:last-child{border-bottom:none;}
-.mc-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;}
-.mc-left{display:flex;flex-direction:column;gap:4px;}
-.mc-right{display:flex;align-items:baseline;gap:5px;}
-.mc-name{font-size:0.92rem;font-weight:500;color:var(--text);}
-.mc-trend{font-size:0.75rem;font-weight:500;padding:2px 7px;border-radius:4px;}
-.tg{background:var(--good-acc);color:var(--good);}
-.tb{background:var(--danger-acc);color:var(--danger);}
-.tn{background:var(--accent-bg);color:var(--accent);}
-.tu{background:var(--surface2);color:var(--text3);}
-.mc-val{font-family:var(--mono);font-size:1.7rem;font-weight:500;line-height:1;}
-.mc-val-danger{color:var(--danger);}
-.mc-val-warn{color:var(--warn);}
-.mc-val-normal{color:var(--good);}
-.mc-unit{font-family:var(--mono);font-size:0.78rem;color:var(--text3);}
-.mc-ref{font-size:0.72rem;color:var(--text3);margin-top:6px;}
+/* ── MAIN CONTENT ── */
+#main-content {
+  padding: 36px 40px 60px; overflow-y: auto; background: var(--bg); max-width: 1200px;
+}
+.page-header { margin-bottom: 28px; }
+.page-title  { font-family: var(--serif); font-size: 2.2rem; font-style: italic; font-weight: 400; letter-spacing: -0.01em; }
+.page-sub    { color: var(--text3); font-size: 0.74rem; margin-top: 4px; letter-spacing: 0.04em; }
 
-/* ── RANGE BAR ── */
-.rb-wrap{position:relative;padding-bottom:16px;}
-.rb-track{height:6px;background:#e2e8f0;border-radius:3px;position:relative;margin:4px 0 2px;}
-.rb-zone{position:absolute;top:0;height:100%;background:rgba(34,197,94,0.2);border:1px solid rgba(34,197,94,0.4);border-radius:2px;}
-.rb-dot{position:absolute;top:50%;transform:translate(-50%,-50%);width:13px;height:13px;border-radius:50%;border:2px solid var(--surface);box-shadow:0 1px 3px rgba(0,0,0,0.2);z-index:1;}
-.rb-normal{background:var(--good);}
-.rb-warn{background:var(--warn);}
-.rb-danger{background:var(--danger);}
-.rb-labels{position:relative;height:14px;font-family:var(--mono);font-size:0.65rem;color:var(--text3);}
-.rb-labels span{position:absolute;transform:translateX(-50%);}
+/* ── KPI STRIP ── */
+.kpi-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 32px;
+}
+.kpi {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
+  padding: 16px; position: relative; overflow: hidden; transition: border-color 0.2s;
+}
+.kpi:hover { border-color: var(--border2); }
+.kpi-danger { border-left: 2px solid var(--red-d); }
+.kpi-warn   { border-left: 2px solid var(--yellow-d); }
+.kpi-normal { border-left: 2px solid rgba(134,239,172,0.3); }
+.kpi-icon  { font-size: 0.7rem; color: var(--text3); margin-bottom: 8px; }
+.kpi-label { font-size: 0.68rem; color: var(--text2); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+.kpi-val   { font-size: 1.6rem; font-weight: 300; line-height: 1; }
+.kpi-unit  { font-size: 0.7rem; color: var(--text3); }
+.kpi-delta { font-size: 0.7rem; margin-top: 4px; }
+.kpi-ref   { font-size: 0.62rem; color: var(--text3); margin-top: 4px; }
+.d-pos { color: var(--green); }
+.d-neg { color: var(--red); }
+
+/* ── SECTION HEAD ── */
+.section-head {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 14px; margin-top: 32px;
+}
+.section-head span {
+  font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text3);
+}
+.section-head::after {
+  content: ""; flex: 1; height: 1px; background: var(--border);
+}
+
+/* ── INSIGHTS ── */
+.insights-grid { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.insight {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 14px; border-radius: 8px; font-size: 0.78rem; border: 1px solid transparent;
+}
+.insight-good   { background: rgba(134,239,172,0.06); border-color: rgba(134,239,172,0.15); color: var(--green); }
+.insight-bad    { background: rgba(252,165,165,0.06); border-color: rgba(252,165,165,0.15); color: var(--red); }
+.insight-warn   { background: rgba(252,211,77,0.06);  border-color: rgba(252,211,77,0.15);  color: var(--yellow); }
+.insight-info   { background: rgba(96,165,250,0.06);  border-color: rgba(96,165,250,0.15);  color: #93c5fd; }
+.i-icon { font-size: 0.85rem; flex-shrink: 0; margin-top: 1px; }
+.i-text { color: var(--text2); }
+
+/* ── FLAGS TABLE ── */
+.flags-table { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; margin-bottom: 8px; }
+.ft-head, .ft-row { display: grid; grid-template-columns: 2fr 1fr 1.2fr 0.8fr 0.8fr; gap: 0; padding: 10px 16px; }
+.ft-head { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text3); border-bottom: 1px solid var(--border); }
+.ft-row  { font-size: 0.78rem; border-bottom: 1px solid var(--border); }
+.ft-row:last-child { border-bottom: none; }
+.ft-row:hover { background: var(--surface2); }
+.ft-name { color: var(--text); }
+.ft-val  { color: var(--text2); font-weight: 500; }
+.ft-ref  { color: var(--text3); }
+.ft-trend{ color: var(--text3); }
+.ft-danger { color: var(--red); }
+.ft-warn   { color: var(--yellow); }
+
+/* ── MINI CHART GRID ── */
+.mini-chart-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+}
+.mini-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
+  padding: 12px; transition: border-color 0.15s;
+}
+.mini-card:hover { border-color: var(--border2); }
+.mc-normal { border-top: 1px solid rgba(134,239,172,0.2); }
+.mc-warn   { border-top: 1px solid rgba(252,211,77,0.3); }
+.mc-danger { border-top: 1px solid rgba(252,165,165,0.35); }
+.mc-top  { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+.mc-name { font-size: 0.7rem; color: var(--text2); }
+.mc-now  { font-size: 0.85rem; font-weight: 500; text-align: right; }
+.mc-now em { font-size: 0.62rem; color: var(--text3); font-style: normal; }
+.mc-canvas { display: block; width: 100%; }
+.mc-dates { display: flex; gap: 6px; font-size: 0.6rem; margin-top: 6px; color: var(--text3); }
+.mcd-normal { color: var(--green); }
+.mcd-warn   { color: var(--yellow); }
+.mcd-danger { color: var(--red); }
 
 /* ── DETAIL GRID ── */
-.detail-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;}
-.detail-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px;box-shadow:var(--shadow);}
-.dc-normal{border-top:2px solid var(--good-b);}
-.dc-warn{border-top:2px solid var(--warn-b);}
-.dc-danger{border-top:2px solid var(--danger-b);}
-.dc-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;}
-.dc-name{font-size:0.88rem;font-weight:600;color:var(--text);}
-.dc-ref{font-size:0.7rem;color:var(--text3);margin-top:3px;}
-.dc-right{text-align:right;}
-.dc-val{font-family:var(--mono);font-size:1.5rem;font-weight:500;line-height:1;}
-.dc-val-danger{color:var(--danger);}
-.dc-val-warn{color:var(--warn);}
-.dc-val-normal{color:var(--text);}
-.dc-unit{font-family:var(--mono);font-size:0.65rem;color:var(--text3);}
-.dc-delta{font-size:0.72rem;margin-top:3px;}
-.dc-canvas{display:block;width:100%;margin-top:10px;}
-.dc-history{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px;}
-.dh-pt{font-family:var(--mono);font-size:0.68rem;padding:2px 7px;border-radius:4px;}
-.dh-normal{background:var(--good-acc);color:var(--good);}
-.dh-warn{background:var(--warn-acc);color:var(--warn);}
-.dh-danger{background:var(--danger-acc);color:var(--danger);}
-.d-pos{color:var(--good);}.d-neg{color:var(--danger);}
-
-/* ── IMAGING PAGE ── */
-.img-list{display:flex;flex-direction:column;gap:16px;}
-.img-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;box-shadow:var(--shadow);}
-.img-card-head{display:flex;align-items:center;gap:14px;padding:18px 20px;border-bottom:1px solid var(--border);background:var(--surface2);}
-.img-card-icon{font-size:1.8rem;flex-shrink:0;}
-.img-card-title{font-size:0.95rem;font-weight:600;color:var(--text);}
-.img-card-meta{font-size:0.75rem;color:var(--text3);margin-top:2px;}
-.img-section{padding:16px 20px;border-bottom:1px solid var(--border);}
-.img-section:last-child{border-bottom:none;}
-.img-section-imp{background:var(--accent-bg);}
-.img-sec-label{font-size:0.7rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);font-weight:600;margin-bottom:6px;}
-.img-sec-body{font-size:0.88rem;color:var(--text2);line-height:1.7;}
-.img-impression{color:var(--text);font-weight:500;}
+.detail-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.detail-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
+  padding: 16px; transition: border-color 0.15s;
+}
+.detail-card:hover { border-color: var(--border2); }
+.dc-normal { border-left: 2px solid rgba(134,239,172,0.25); }
+.dc-warn   { border-left: 2px solid rgba(252,211,77,0.4); }
+.dc-danger { border-left: 2px solid rgba(252,165,165,0.5); }
+.dc-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
+.dc-name   { font-size: 0.82rem; font-weight: 500; color: var(--text); }
+.dc-ref    { font-size: 0.65rem; color: var(--text3); margin-top: 2px; }
+.dc-right  { text-align: right; }
+.dc-val    { font-size: 1.4rem; font-weight: 300; }
+.dc-unit   { font-size: 0.65rem; color: var(--text3); }
+.dc-delta  { font-size: 0.7rem; margin-top: 2px; }
+.dc-canvas { display: block; width: 100%; }
+.dc-history{ display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.dh-pt { font-size: 0.62rem; padding: 2px 6px; border-radius: 4px; }
+.dh-normal { background: rgba(134,239,172,0.1); color: var(--green); }
+.dh-warn   { background: rgba(252,211,77,0.1);  color: var(--yellow); }
+.dh-danger { background: rgba(252,165,165,0.1); color: var(--red); }
 
 /* ── HISTORY ── */
-.hist-list{display:flex;flex-direction:column;gap:14px;}
-.hist-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:20px;box-shadow:var(--shadow);}
-.hist-card-img{border-left:3px solid var(--accent);}
-.hist-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;}
-.hist-date{font-family:var(--serif);font-size:1.2rem;font-style:italic;color:var(--text);}
-.hist-lab{font-size:0.74rem;color:var(--text3);margin-top:2px;}
-.hist-counts{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;}
-.hc-total{font-size:0.72rem;color:var(--text3);}
-.hc-d{font-size:0.72rem;background:var(--danger-acc);color:var(--danger);padding:2px 8px;border-radius:20px;}
-.hc-w{font-size:0.72rem;background:var(--warn-acc);color:var(--warn);padding:2px 8px;border-radius:20px;}
-.hc-ok{font-size:0.72rem;background:var(--good-acc);color:var(--good);padding:2px 8px;border-radius:20px;}
-.hc-img{font-size:0.72rem;background:var(--accent-bg);color:var(--accent);padding:2px 8px;border-radius:20px;}
-.btn-del-hist{background:transparent;border:1px solid var(--danger-b);color:var(--danger);padding:3px 10px;border-radius:6px;font-size:0.72rem;}
-.hist-metrics{display:flex;flex-wrap:wrap;gap:5px;}
-.hm-chip{font-family:var(--mono);font-size:0.68rem;padding:3px 8px;border-radius:5px;}
-.hm-normal{background:var(--surface2);color:var(--text2);}
-.hm-warn{background:var(--warn-acc);color:var(--warn);}
-.hm-danger{background:var(--danger-acc);color:var(--danger);}
-.hm-more{background:var(--surface2);color:var(--text3);}
-.hist-img-scans{display:flex;flex-wrap:wrap;gap:6px;}
-.img-scan-chip{font-size:0.78rem;background:var(--accent-bg);color:var(--accent);padding:4px 10px;border-radius:6px;}
+.hist-list { display: flex; flex-direction: column; gap: 14px; }
+.hist-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 20px; }
+.hist-top  { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px; }
+.hist-date { font-family: var(--serif); font-size: 1.2rem; font-style: italic; }
+.hist-lab  { font-size: 0.72rem; color: var(--text3); margin-top: 2px; }
+.hist-counts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.hc-total { font-size: 0.68rem; color: var(--text3); }
+.hc-d     { font-size: 0.68rem; background: rgba(252,165,165,0.1); color: var(--red); padding: 2px 8px; border-radius: 20px; }
+.hc-w     { font-size: 0.68rem; background: rgba(252,211,77,0.1); color: var(--yellow); padding: 2px 8px; border-radius: 20px; }
+.hc-ok    { font-size: 0.68rem; background: rgba(134,239,172,0.1); color: var(--green); padding: 2px 8px; border-radius: 20px; }
+.btn-del-hist { background: transparent; border: 1px solid rgba(252,165,165,0.2); color: var(--red); padding: 3px 8px; border-radius: 6px; font-size: 0.72rem; }
+.hist-metrics { display: flex; flex-wrap: wrap; gap: 6px; }
+.hm-chip  { font-size: 0.65rem; padding: 3px 8px; border-radius: 5px; }
+.hm-normal{ background: rgba(134,239,172,0.07); color: var(--text2); }
+.hm-warn  { background: rgba(252,211,77,0.1); color: var(--yellow); }
+.hm-danger{ background: rgba(252,165,165,0.1); color: var(--red); }
+.hm-more  { background: var(--surface2); color: var(--text3); }
 
 /* ── MODAL ── */
-#modal{display:none;position:fixed;inset:0;z-index:200;background:rgba(15,23,42,0.5);backdrop-filter:blur(4px);align-items:center;justify-content:center;padding:20px;}
-#modal-inner{background:var(--surface);border:1px solid var(--border);border-radius:14px;width:100%;max-width:700px;max-height:90vh;overflow-y:auto;display:flex;flex-direction:column;box-shadow:var(--shadow-md);}
-.m-head{display:flex;justify-content:space-between;align-items:center;padding:20px 28px 16px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface);z-index:1;}
-.m-head h2{font-family:var(--serif);font-style:italic;font-size:1.4rem;font-weight:400;}
-.m-close{background:var(--surface2);border:1px solid var(--border);color:var(--text2);width:28px;height:28px;border-radius:7px;font-size:0.9rem;}
-.m-notice{margin:16px 28px 0;padding:10px 14px;border-radius:8px;font-size:0.78rem;line-height:1.5;}
-.m-notice-ok{background:var(--good-acc);color:var(--good);border:1px solid var(--good-b);}
-.m-notice-info{background:var(--accent-bg);color:var(--accent);border:1px solid #bfdbfe;}
-
-.m-upload-body{padding:0 28px 24px;display:flex;flex-direction:column;}
-.m-meta-row{display:flex;gap:16px;padding:20px 0 18px;flex-wrap:wrap;}
-.m-meta-top{padding:20px 28px 0;}
-.m-meta-label{display:flex;flex-direction:column;gap:4px;font-size:0.74rem;font-weight:500;color:var(--text2);flex:1;min-width:160px;}
-.m-meta-label input,.m-meta-label select{background:var(--surface2);border:1px solid var(--border2);color:var(--text);padding:9px 12px;border-radius:8px;font-size:0.84rem;margin-top:2px;}
-.m-meta-label input:focus,.m-meta-label select:focus{outline:none;border-color:var(--accent);}
-.m-meta-hint{font-size:0.68rem;color:var(--text3);font-weight:400;}
-
-/* Upload zone — entire box is a click target */
-.upload-zone{
-  border:2px dashed var(--border2);border-radius:var(--r);
-  padding:40px 24px;text-align:center;cursor:pointer;
-  transition:border-color 0.2s,background 0.2s;
-  background:var(--surface2);
-  user-select:none;
+#modal {
+  display: none; position: fixed; inset: 0; z-index: 200;
+  background: rgba(0,0,0,0.75); backdrop-filter: blur(6px);
+  align-items: center; justify-content: center; padding: 20px;
 }
-.upload-zone:hover{border-color:var(--accent);background:var(--accent-bg);}
-.upload-zone.dz-over{border-color:var(--accent);background:var(--accent-bg);}
-.dz-icon{font-size:2rem;color:var(--text3);margin-bottom:10px;}
-.dz-text{font-size:0.95rem;font-weight:600;color:var(--text2);margin-bottom:6px;}
-.dz-sub{font-size:0.8rem;color:var(--text3);margin-bottom:8px;}
-.dz-hint{font-size:0.7rem;color:var(--text3);}
+#modal-inner {
+  background: var(--surface); border: 1px solid var(--border2); border-radius: 16px;
+  width: 100%; max-width: 700px; max-height: 90vh; overflow-y: auto;
+  display: flex; flex-direction: column;
+}
+.m-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 20px 24px 16px; border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; background: var(--surface); z-index: 1;
+}
+.m-head h2 { font-family: var(--serif); font-style: italic; font-size: 1.3rem; font-weight: 400; }
+.m-close { background: transparent; border: 1px solid var(--border); color: var(--text2); width: 28px; height: 28px; border-radius: 7px; font-size: 0.9rem; }
+.m-meta { display: flex; gap: 14px; padding: 16px 24px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.m-meta label { display: flex; flex-direction: column; gap: 4px; font-size: 0.72rem; color: var(--text3); flex: 1; min-width: 150px; }
+.m-meta input { background: var(--bg); border: 1px solid var(--border2); color: var(--text); padding: 8px 10px; border-radius: 7px; font-size: 0.82rem; }
+.m-groups { padding: 16px 24px; flex: 1; }
+.m-group { margin-bottom: 18px; }
+.m-gtitle { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--accent); margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.m-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(175px,1fr)); gap: 8px; }
+.m-field { display: flex; flex-direction: column; gap: 3px; font-size: 0.7rem; color: var(--text3); }
+.m-field em { color: var(--accent); font-style: normal; margin-left: 4px; font-size: 0.62rem; }
+.m-field input { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 9px; border-radius: 6px; font-size: 0.78rem; }
+.m-field input:focus { outline: none; border-color: var(--accent); }
+.m-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 24px; border-top: 1px solid var(--border); position: sticky; bottom: 0; background: var(--surface); }
+.m-cancel { padding: 8px 16px; background: transparent; color: var(--text3); border: 1px solid var(--border); border-radius: 7px; font-size: 0.78rem; }
+.m-save { padding: 8px 20px; background: var(--accent); color: #fff; border: none; border-radius: 7px; font-size: 0.78rem; font-weight: 500; }
+.m-save:hover { background: #2563eb; }
 
-#file-list{display:flex;flex-direction:column;gap:6px;margin-top:12px;}
-.file-item{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;font-size:0.8rem;border:1px solid var(--border);}
-.fi-loading{background:var(--surface2);color:var(--text3);}
-.fi-ok{background:var(--good-acc);border-color:var(--good-b);}
-.fi-warn{background:var(--warn-acc);border-color:var(--warn-b);}
-.fi-img{background:var(--accent-bg);border-color:#bfdbfe;}
-.fi-spinner{width:14px;height:14px;border:2px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:spin 0.7s linear infinite;flex-shrink:0;}
-@keyframes spin{to{transform:rotate(360deg);}}
-.fi-icon{font-size:0.9rem;flex-shrink:0;}
-.fi-ok .fi-icon{color:var(--good);}
-.fi-warn .fi-icon{color:var(--warn);}
-.fi-icon-img{font-size:1.2rem;flex-shrink:0;}
-.fi-info{display:flex;flex-direction:column;gap:2px;flex:1;overflow:hidden;}
-.fi-name{font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:0.82rem;}
-.fi-tag{font-size:0.7rem;color:var(--text3);}
-.fi-status{font-size:0.72rem;color:var(--text3);}
-.fi-remove{background:transparent;border:1px solid var(--border2);color:var(--text3);width:22px;height:22px;border-radius:5px;font-size:0.9rem;flex-shrink:0;display:flex;align-items:center;justify-content:center;}
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
 
-.upload-actions{display:flex;flex-direction:row;align-items:center;justify-content:space-between;margin-top:14px;gap:10px;}
-.add-more-btn{font-size:0.8rem;font-weight:500;color:var(--accent);cursor:pointer;padding:8px 14px;border-radius:7px;border:1px solid #bfdbfe;background:var(--accent-bg);white-space:nowrap;}
-.review-btn{padding:9px 20px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:0.84rem;font-weight:500;white-space:nowrap;}
-.review-btn:hover{background:#1d4ed8;}
-
-.m-divider{display:flex;align-items:center;gap:12px;color:var(--text3);font-size:0.74rem;margin:16px 0;}
-.m-divider::before,.m-divider::after{content:"";flex:1;height:1px;background:var(--border);}
-.m-manual-btn{padding:10px;background:transparent;color:var(--text2);border:1px solid var(--border2);border-radius:8px;font-size:0.82rem;}
-.m-manual-btn:hover{border-color:var(--accent);color:var(--accent);}
-
-/* Imaging review */
-.img-review-body{padding:0 28px 8px;}
-.img-review-fields{display:flex;gap:14px;padding:16px 0 4px;flex-wrap:wrap;}
-.img-select{background:var(--surface2);border:1px solid var(--border2);color:var(--text);padding:9px 12px;border-radius:8px;font-size:0.84rem;margin-top:2px;}
-.img-textarea-label{display:flex;flex-direction:column;gap:6px;font-size:0.74rem;font-weight:500;color:var(--text2);margin-bottom:14px;padding:0 28px;}
-.img-textarea{background:var(--surface2);border:1px solid var(--border2);color:var(--text);padding:10px 12px;border-radius:8px;font-size:0.84rem;line-height:1.6;resize:vertical;}
-.img-textarea:focus{outline:none;border-color:var(--accent);background:#fff;}
-.raw-text-details{padding:0 28px 16px;}
-.raw-text-details summary{font-size:0.75rem;color:var(--text3);cursor:pointer;padding:8px 0;}
-.raw-text-pre{font-size:0.72rem;color:var(--text3);background:var(--surface2);padding:12px;border-radius:8px;white-space:pre-wrap;overflow:auto;max-height:200px;margin-top:8px;}
-
-/* Lab review */
-.m-groups{padding:0 28px 8px;}
-.m-group{margin-bottom:22px;}
-.m-gtitle{font-size:0.68rem;text-transform:uppercase;letter-spacing:0.08em;color:var(--accent);font-weight:600;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border);}
-.m-fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(175px,1fr));gap:8px;}
-.m-field{display:flex;flex-direction:column;gap:3px;}
-.mf-label{font-size:0.72rem;color:var(--text2);font-weight:500;}
-.mf-label em{color:var(--text3);font-style:normal;font-weight:400;margin-left:3px;font-size:0.65rem;}
-.m-field input{background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:7px;font-size:0.82rem;}
-.m-field input:focus{outline:none;border-color:var(--accent);background:#fff;}
-.mf-found input{border-color:var(--good-b);background:var(--good-acc);}
-.fi-warn{border-color:var(--warn-b)!important;}
-.fi-danger{border-color:var(--danger-b)!important;}
-
-.m-foot{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:16px 28px;border-top:1px solid var(--border);position:sticky;bottom:0;background:var(--surface);}
-.m-back{padding:8px 16px;background:transparent;color:var(--text3);border:1px solid var(--border2);border-radius:7px;font-size:0.8rem;}
-.m-save{padding:9px 24px;background:var(--accent);color:#fff;border:none;border-radius:7px;font-size:0.84rem;font-weight:500;}
-.m-save:hover{background:#1d4ed8;}
-
-::-webkit-scrollbar{width:5px;height:5px;}
-::-webkit-scrollbar-track{background:transparent;}
-::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px;}
-
-@media(max-width:900px){
-  #app{grid-template-columns:1fr;}
-  #sidebar{position:relative;height:auto;}
-  #main-content{padding:24px 20px 60px;}
-  .detail-grid{grid-template-columns:1fr;}
+@media (max-width: 900px) {
+  #app { grid-template-columns: 1fr; }
+  #sidebar { position: relative; height: auto; flex-direction: row; flex-wrap: wrap; padding: 12px; }
+  .kpi-grid { grid-template-columns: repeat(2,1fr); }
+  .mini-chart-grid { grid-template-columns: repeat(2,1fr); }
+  .detail-grid { grid-template-columns: 1fr; }
+  #main-content { padding: 20px; }
+}
+@media (max-width: 560px) {
+  .kpi-grid { grid-template-columns: repeat(2,1fr); }
+  .mini-chart-grid { grid-template-columns: 1fr; }
 }
 </style>
 </head>
 <body>
+
+<!-- AUTH -->
 <div id="auth-screen">
   <div class="auth-box">
     <div class="auth-logo">Health<span>.</span></div>
@@ -1336,10 +943,15 @@ input,select,textarea{font-family:var(--font);}
     </button>
   </div>
 </div>
+
+<!-- APP -->
 <div id="app">
   <div id="sidebar"></div>
   <div id="main-content"></div>
 </div>
+
+<!-- MODAL -->
 <div id="modal"><div id="modal-inner"></div></div>
+
 </body>
 </html>
