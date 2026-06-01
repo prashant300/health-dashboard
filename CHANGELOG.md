@@ -114,3 +114,54 @@ All report additions and dashboard updates are logged here.
 ---
 
 *This changelog is maintained automatically. Each new report added to the dashboard is logged here.*
+
+---
+
+### [Body Composition Scans] — Accuniq Machine
+
+Three body composition scans added from Accuniq BIA machine.
+
+#### Aug 27, 2025 — Accuniq Scan
+
+| Metric | Value | Status |
+|---|---|---|
+| Weight | 73.4 kg | ✅ Normal |
+| Fat Mass | 16.8 kg | ⚠️ Above optimal |
+| Body Fat % | 22.9% | ⚠️ Above 15–20% male range |
+| Skeletal Muscle Mass | 31.7 kg | ⚠️ Slightly below target |
+| BMI | 23.4 | ✅ Normal |
+| Waist-Hip Ratio | 0.84 | ✅ Normal |
+| BMR | 1592 kcal | ✅ Normal |
+| ECW Ratio | 0.394 | ⚠️ Above optimal 0.38 |
+| Body Type | Over fat | 🔴 |
+
+#### Apr 26, 2026 — Accuniq Scan
+
+| Metric | Value | Status | vs Aug 2025 |
+|---|---|---|---|
+| Weight | 73.5 kg | ✅ Normal | → Stable |
+| Fat Mass | 16.7 kg | ⚠️ Above optimal | ↓ Slightly improved |
+| Body Fat % | 22.7% | ⚠️ Above range | ↓ Slightly improved |
+| Skeletal Muscle Mass | 31.9 kg | ⚠️ Building | ↑ +0.2 kg |
+| BMI | 23.2 | ✅ Normal | → Stable |
+| Waist-Hip Ratio | 0.85 | ✅ Normal | ↑ Slight rise |
+| BMR | 1597 kcal | ✅ Normal | ↑ +5 kcal |
+| ECW Ratio | 0.400 | ⚠️ Above optimal | ↑ Worsened |
+| Body Type | Over fat | 🔴 | → Unchanged |
+
+#### Jun 1, 2026 — Accuniq Scan
+
+| Metric | Value | Status | vs Apr 2026 |
+|---|---|---|---|
+| Weight | 76.9 kg | ⚠️ Rising | ↑ +3.4 kg in 5 weeks 🔴 |
+| Fat Mass | 19.4 kg | 🔴 High | ↑ +2.7 kg — significant jump |
+| Body Fat % | 25.2% | 🔴 High | ↑ +2.5% — significant |
+| Skeletal Muscle Mass | 32.2 kg | ✅ Growing | ↑ +0.3 kg ✅ |
+| BMI | 24.3 | ✅ Normal (barely) | ↑ Rising toward overweight |
+| Waist-Hip Ratio | 0.86 | ✅ Normal | ↑ Trending toward upper limit |
+| BMR | 1613 kcal | ✅ Normal | ↑ +16 kcal |
+| ECW Ratio | 0.392 | ⚠️ Above optimal | ↓ Slight improvement |
+| Body Type | Over fat | 🔴 | → Unchanged |
+| Fat to Lose to Target | 7.2 kg | 🔴 | ↑ Increased from 4.5 kg |
+
+**Key insight Jun 2026:** 3.4 kg weight gain in 5 weeks with 2.7 kg being pure fat mass. Muscle continues growing (+0.3 kg) which is positive. Root cause likely sustained caloric surplus from frequent restaurant meals. This fat accumulation is the primary driver of high triglycerides (156), low HDL (35), and elevated uric acid (8.0) in blood reports. Fat loss of 7.2 kg target weight would likely normalise all three blood flags without medication.
